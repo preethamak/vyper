@@ -1,19 +1,36 @@
-# Vyper Guard
+<div align="center">
 
-**Vyper Guard** is a lightweight static security analyzer for **Vyper smart contracts**.
-It scans `.vy` files and highlights insecure patterns, logic risks, and best-practice violations before deployment.
+# 🛡️ Vyper Guard
 
-The goal is to give developers **quick feedback directly from the terminal** while writing contracts.
+**Lightweight Static Security Analyzer for Vyper Smart Contracts**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/vyper-guard)](https://pypi.org/project/vyper-guard/)
 
+Scan `.vy` files for vulnerabilities and get instant feedback from your terminal.
+
+[Installation](#installation) • [Usage](#usage) • [Detectors](#detectors) • [Examples](#examples)
+
+</div>
+
+---
+
+## What is Vyper Guard?
+
+Vyper Guard is a **fast, accurate static analyzer** built specifically for Vyper smart contracts. It detects security vulnerabilities, logic risks, and best-practice violations before deployment.
+
+**Key Features:**
+- ⚡ Lightning-fast analysis (scan in milliseconds)
+- 🎯 Vyper-native (understands decorators, built-in safety)
+- 🔍 12+ specialized security detectors
+- 🛠️ Auto-fix detected vulnerabilities
+- 📊 Clear security scoring (0-100)
+- 📄 Multiple output formats (CLI, JSON, Markdown)
+
 ---
 
 ## Installation
-
-Install the CLI globally using pip:
 
 ```bash
 pip install vyper-guard
@@ -22,52 +39,35 @@ pip install vyper-guard
 Verify installation:
 
 ```bash
-vyper-guard --help
+vyper-guard --version
 ```
-
-If installed correctly, the CLI help menu will appear.
 
 ---
 
-## Basic Usage
+## Quick Start
 
-Analyze a single contract:
-
-```bash
-vyper-guard analyze contract.vy
-```
-
-Example:
+### Analyze a Single Contract
 
 ```bash
 vyper-guard analyze vault.vy
 ```
 
----
-
-## Analyze a Folder
-
-Scan all Vyper contracts inside a directory:
+### Analyze a Folder
 
 ```bash
 vyper-guard analyze contracts/
 ```
 
-The tool will recursively scan all `.vy` files.
-
----
-
-## Output Formats
+### Generate JSON Report
 
 ```bash
-# Rich terminal output (default)
-vyper-guard analyze contract.vy
+vyper-guard analyze vault.vy --format json --output report.json
+```
 
-# JSON report
-vyper-guard analyze contract.vy --format json --output report.json
+### Auto-Fix Vulnerabilities
 
-# Markdown report
-vyper-guard analyze contract.vy --format markdown --output report.md
+```bash
+vyper-guard analyze vault.vy --fix
 ```
 
 ---
@@ -75,262 +75,332 @@ vyper-guard analyze contract.vy --format markdown --output report.md
 ## Example Output
 
 ```
-========================================
-VYPER GUARD SECURITY REPORT
-========================================
+╔════════════════════════════════════════════════════════════════╗
+║            VYPER GUARD SECURITY REPORT                         ║
+╚════════════════════════════════════════════════════════════════╝
 
-File: vault.vy
+📄 File: vault.vy
 
-Security Score: 14 / 100
-Risk Level: CRITICAL
-Recommendation: DO NOT DEPLOY
+┌────────────────────────────────────────────────────────────────┐
+│ SECURITY SCORE: 34 / 100                                       │
+│ Grade: F  |  Risk: 🔴 CRITICAL                                 │
+│ ⚠️  DO NOT DEPLOY                                              │
+└────────────────────────────────────────────────────────────────┘
 
-----------------------------------------
-Severity Breakdown
-----------------------------------------
+SEVERITY BREAKDOWN
+  🔴 CRITICAL ..... 2 issues
+  🟠 HIGH ......... 3 issues
+  🟡 MEDIUM ....... 1 issue
+  🔵 LOW .......... 2 issues
 
-CRITICAL : 2
-HIGH     : 3
-MEDIUM   : 2
-LOW      : 1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-----------------------------------------
-Findings
-----------------------------------------
+🔴 CRITICAL: Reentrancy Vulnerability (Line 42)
 
-[CRITICAL] Reentrancy vulnerability
-Line: 42
-Issue:
-External call happens before state update.
+  Issue: External call before state update
+  
+  Vulnerable Code:
+    42 │   raw_call(msg.sender, b"", value=balance)
+    43 │   self.balances[msg.sender] = 0
 
-Fix:
-Follow Checks-Effects-Interactions pattern
-or use @nonreentrant.
+  ✅ Fix: Update state BEFORE external call
+    42 │   self.balances[msg.sender] = 0
+    43 │   raw_call(msg.sender, b"", value=balance)
 
-----------------------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-[HIGH] Unsafe raw_call usage
-Line: 42
-Issue:
-raw_call used without proper checks.
-
-Fix:
-Validate return value or avoid raw_call.
+Next Steps:
+  1. Fix all CRITICAL issues immediately
+  2. Address HIGH severity vulnerabilities
+  3. Re-run: vyper-guard analyze vault.vy
 ```
-
----
-
-## What Vyper Guard Detects
-
-### Security Issues
-
-- Reentrancy risks
-- Unsafe `raw_call`
-- Delegatecall misuse
-- Unprotected selfdestruct
-- Unprotected state modification
-- Unchecked subtraction / integer overflow
-
-### Logic & Best Practices
-
-- Checks-Effects-Interactions violations
-- Timestamp dependence
-- Value transfers inside loops
-- Missing reentrancy guards
-- Missing event emission
-- Known compiler version bugs
 
 ---
 
 ## Detectors
 
-| # | Detector | Severity | What It Finds |
-|---|----------|----------|---------------|
-| 1 | `missing_nonreentrant` | CRITICAL | External functions with value transfers but no `@nonreentrant` |
-| 2 | `unsafe_raw_call` | HIGH | `raw_call()` without return value checks |
-| 3 | `missing_event_emission` | LOW | State-changing functions that emit no event |
-| 4 | `timestamp_dependence` | LOW | `block.timestamp` used in conditional logic |
-| 5 | `integer_overflow` | HIGH | `unsafe_add`, `unsafe_sub`, `unsafe_mul`, `unsafe_div` usage |
-| 6 | `unprotected_selfdestruct` | CRITICAL | `selfdestruct()` without access control |
-| 7 | `dangerous_delegatecall` | HIGH | `raw_call()` with `is_delegate_call=True` |
-| 8 | `unprotected_state_change` | HIGH | Writes to sensitive state without `msg.sender` check |
-| 9 | `send_in_loop` | HIGH | `send()` / `raw_call()` inside `for` loops |
-| 10 | `unchecked_subtraction` | HIGH | `self.x -= amount` without overflow guard |
-| 11 | `cei_violation` | HIGH | External call before state update |
-| 12 | `compiler_version_check` | HIGH / INFO | Known Vyper compiler CVEs (GHSA-5824, GHSA-vxmm) |
+Vyper Guard includes **12 specialized detectors** for Vyper contracts:
+
+### 🔴 Critical Vulnerabilities
+
+| Detector | Description |
+|----------|-------------|
+| `cei_violation` | External calls before state updates (reentrancy) |
+| `unprotected_selfdestruct` | Selfdestruct without access control |
+| `missing_nonreentrant` | Value transfers without `@nonreentrant` |
+
+### 🟠 High Severity
+
+| Detector | Description |
+|----------|-------------|
+| `unsafe_raw_call` | `raw_call()` without return value checks |
+| `dangerous_delegatecall` | Delegatecall with untrusted data |
+| `unprotected_state_change` | State changes without authorization |
+| `integer_overflow` | Unsafe arithmetic operations |
+| `send_in_loop` | Value transfers in loops (DoS risk) |
+| `unchecked_subtraction` | Subtraction without underflow check |
+
+### 🟡 Medium & 🔵 Low
+
+| Detector | Severity | Description |
+|----------|----------|-------------|
+| `compiler_version_check` | MEDIUM | Known vulnerable compiler versions |
+| `missing_event_emission` | LOW | State changes without events |
+| `timestamp_dependence` | LOW | Logic depends on `block.timestamp` |
 
 ---
 
-## Security Score
+## Security Scoring
 
-Each contract receives a **0-100 security score**.
+Each contract receives a **0-100 security score**:
 
-| Score | Grade | Meaning |
-|-------|-------|---------|
-| 90-100 | A+ | Production ready |
-| 75-89 | A | Minor fixes needed |
-| 60-74 | B | Review required |
-| 45-59 | C | Risky - major fixes needed |
-| < 45 | F | Do not deploy |
+```
+Base Score: 100
 
-The score decreases based on detected vulnerability severity:
+Deductions:
+  CRITICAL: -40 points (capped at -80)
+  HIGH:     -20 points (capped at -60)
+  MEDIUM:   -8 points  (capped at -24)
+  LOW:      -3 points  (capped at -9)
+```
 
-| Severity | Penalty per finding |
-|----------|-------------------|
-| CRITICAL | -40 |
-| HIGH | -20 |
-| MEDIUM | -8 |
-| LOW | -3 |
-| INFO | -1 |
+### Grade Scale
 
-Each severity tier is capped to prevent a single category from dominating the score.
+| Score | Grade | Risk | Recommendation |
+|-------|-------|------|----------------|
+| 90-100 | A+ | ✅ Minimal | Production ready |
+| 75-89 | A | 🟢 Low | Minor fixes |
+| 60-74 | B | 🟡 Moderate | Review required |
+| 45-59 | C | 🟠 High | Major fixes needed |
+| 0-44 | F | 🔴 Critical | **DO NOT DEPLOY** |
+
+**Recommended minimum for production: 80+**
 
 ---
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `vyper-guard analyze <file>` | Scan a contract for vulnerabilities |
-| `vyper-guard analyze <file> --fix` | Scan and auto-fix vulnerabilities |
-| `vyper-guard stats <file>` | Show contract structure and complexity |
-| `vyper-guard diff <file1> <file2>` | Compare security posture of two contracts |
-| `vyper-guard detectors` | List all available detectors |
-| `vyper-guard init` | Create a `.guardianrc` config file |
-| `vyper-guard monitor <address>` | Live-monitor a deployed contract |
-| `vyper-guard baseline <address>` | Build normal-behaviour baseline |
-| `vyper-guard version` | Show version and environment info |
+```bash
+# Analyze
+vyper-guard analyze <file_or_directory>
+
+# With options
+vyper-guard analyze vault.vy --format json --output report.json
+vyper-guard analyze vault.vy --severity HIGH
+vyper-guard analyze vault.vy --fix
+
+# Other commands
+vyper-guard stats vault.vy              # Show contract stats
+vyper-guard diff v1.vy v2.vy           # Compare contracts
+vyper-guard detectors                   # List all detectors
+vyper-guard version                     # Show version
+```
+
+### Options
+
+```
+--format TEXT       Output: cli, json, markdown [default: cli]
+--output PATH       Save report to file
+--fix              Auto-fix vulnerabilities
+--severity TEXT    Filter by: LOW, MEDIUM, HIGH, CRITICAL
+--detectors TEXT   Comma-separated detector list
+--exclude TEXT     Exclude patterns
+--verbose          Enable verbose logging
+--config PATH      Configuration file path
+```
 
 ---
 
-## What To Do After a Scan
+## Configuration
 
-After running Vyper Guard:
+Create `.guardianrc` in your project root:
 
-1. Review all **CRITICAL** issues first.
-2. Fix **HIGH severity** vulnerabilities before deployment.
-3. Improve **MEDIUM and LOW** issues to increase security score.
-4. Re-run the scan until the contract reaches a safe score.
+```yaml
+# Analysis Settings
+analysis:
+  enabled_detectors:
+    - cei_violation
+    - unsafe_raw_call
+    - missing_nonreentrant
+  
+  severity_threshold: MEDIUM
+  
+  exclude_patterns:
+    - "*/test/*"
+    - "*/mock/*"
 
-Recommended minimum score for production: **80+**
+# Reporting
+reporting:
+  default_format: cli
+  output_directory: "./reports"
+  include_fix_suggestions: true
+
+# Auto-Fix
+remediation:
+  auto_apply: false
+  backup_original: true
+```
 
 ---
 
-## Typical Workflow
+## Examples
+
+### Example 1: Reentrancy
+
+**❌ Vulnerable:**
+```vyper
+@external
+def withdraw():
+    balance: uint256 = self.balances[msg.sender]
+    raw_call(msg.sender, b"", value=balance)  # External call first
+    self.balances[msg.sender] = 0             # State update after
+```
+
+**✅ Fixed:**
+```vyper
+@external
+@nonreentrant("lock")
+def withdraw():
+    balance: uint256 = self.balances[msg.sender]
+    self.balances[msg.sender] = 0             # State update first
+    raw_call(msg.sender, b"", value=balance)  # External call after
+```
+
+### Example 2: Unsafe raw_call
+
+**❌ Vulnerable:**
+```vyper
+@external
+def transfer(recipient: address, amount: uint256):
+    raw_call(recipient, b"", value=amount)  # No check
+```
+
+**✅ Fixed:**
+```vyper
+@external
+def transfer(recipient: address, amount: uint256):
+    success: bool = raw_call(recipient, b"", value=amount)[0]
+    assert success, "Transfer failed"
+```
+
+### Example 3: Missing Events
+
+**❌ Vulnerable:**
+```vyper
+@external
+def updateOwner(new_owner: address):
+    self.owner = new_owner  # No event
+```
+
+**✅ Fixed:**
+```vyper
+event OwnerUpdated:
+    old_owner: indexed(address)
+    new_owner: indexed(address)
+
+@external
+def updateOwner(new_owner: address):
+    old_owner: address = self.owner
+    self.owner = new_owner
+    log OwnerUpdated(old_owner, new_owner)
+```
+
+---
+
+## Development Workflow
 
 ```
 1. Write Vyper contract
-2. Run vyper-guard analyze contract.vy
-3. Fix reported vulnerabilities
-4. Re-run scan
-5. Deploy when score is acceptable
+2. Run: vyper-guard analyze contract.vy
+3. Fix CRITICAL and HIGH issues
+4. Run: vyper-guard analyze contract.vy --fix
+5. Re-scan until score ≥ 80
+6. Test thoroughly
+7. Deploy
 ```
 
 ---
 
-## Auto-Remediation
+## Security Checklist
+
+Before deploying:
+
+- [ ] Security score ≥ 80
+- [ ] Zero CRITICAL vulnerabilities
+- [ ] Zero HIGH vulnerabilities
+- [ ] All external calls use reentrancy guards
+- [ ] Access control on sensitive functions
+- [ ] Events emitted for state changes
+- [ ] Using latest stable Vyper version
+- [ ] Test coverage ≥ 90%
+
+---
+
+## Contributing
+
+Contributions welcome! Here's how:
+
+- 🐛 Report bugs via [GitHub Issues](https://github.com/preethamak/vyper-guard/issues)
+- 💡 Suggest features or new detectors
+- 📝 Improve documentation
+- 🔧 Submit pull requests
+
+### Development Setup
 
 ```bash
-vyper-guard analyze contract.vy --fix
-```
-
-This will:
-1. Run all detectors
-2. Generate fixes (decorators, guards, events, pragmas)
-3. Show a unified diff for each fix
-4. Write patched code to `contract.fixed.vy`
-5. Prompt before overwriting the original
-
----
-
-## Live Monitoring
-
-```bash
-# Monitor a deployed contract
-vyper-guard monitor 0xAddr --rpc https://mainnet.infura.io/v3/KEY
-
-# Build a baseline first
-vyper-guard baseline 0xAddr --rpc https://rpc.url --duration 300
-
-# Monitor with Slack alerts
-vyper-guard monitor 0xAddr --rpc https://rpc.url \
-  --alert-webhook https://hooks.slack.com/...
-```
-
-Requires: `pip install vyper-guard[monitor]`
-
----
-
-## CI Mode
-
-```bash
-vyper-guard analyze contract.vy --ci --severity-threshold HIGH
-```
-
-Exit code 1 if any findings match or exceed the threshold - use in GitHub Actions or any CI pipeline.
-
----
-
-## Pre-commit Hook
-
-Add to `.pre-commit-config.yaml`:
-
-```yaml
-repos:
-  - repo: https://github.com/preethamak/vyper
-    rev: v0.3.0
-    hooks:
-      - id: vyper-guard
-```
-
-Every commit touching `.vy` files will be scanned automatically.
-
----
-
-## Example Vulnerability Fix
-
-Bad pattern:
-
-```vyper
-raw_call(msg.sender, b"", value=balance)
-self.balances[msg.sender] = 0
-```
-
-Safer pattern:
-
-```vyper
-self.balances[msg.sender] = 0
-raw_call(msg.sender, b"", value=balance)
-```
-
-Or use a reentrancy guard:
-
-```vyper
-@nonreentrant("lock")
+git clone https://github.com/preethamak/vyper-guard.git
+cd vyper-guard
+pip install -e ".[dev]"
+pytest
 ```
 
 ---
 
-## Limitations
+## Resources
 
-Vyper Guard performs **pattern-based static analysis**.
-
-This means:
-
-- It detects known risky patterns
-- It does not compile or execute contracts
-- Some complex vulnerabilities may require manual review
+- [Vyper Documentation](https://docs.vyperlang.org/)
+- [Vyper GitHub](https://github.com/vyperlang/vyper)
 
 ---
 
 ## Disclaimer
 
-Vyper Guard helps identify common vulnerabilities but **does not guarantee contract security**.
+**Important:** Vyper Guard is a static analysis tool that helps identify common vulnerabilities. It **does not guarantee complete security**.
 
-Always combine automated scanning with **manual audits** before deploying smart contracts.
+**Recommendations:**
+- Combine automated scanning with manual audits
+- Test thoroughly on testnets before mainnet
+- Consider professional audits for high-value contracts
+
+Vyper Guard is provided "as is" without warranty.
 
 ---
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+## Acknowledgments
+
+Built with ❤️ by [Preetham AK](https://github.com/preethamak)
+
+Special thanks to the [Vyper](https://github.com/vyperlang/vyper) team.
+
+---
+
+## Contact
+
+- **GitHub Issues:** [Report bugs](https://github.com/preethamak/vyper-guard/issues)
+- **GitHub:** [@preethamak](https://github.com/preethamak)
+
+---
+
+<div align="center">
+
+**⭐ Star us on GitHub!**
+
+Made with 🛡️ for secure smart contract development
+
+</div>
