@@ -340,10 +340,10 @@ Before deploying:
 
 Contributions welcome! Here's how:
 
-- 🐛 Report bugs via [GitHub Issues](https://github.com/preethamak/vyper-guard/issues)
-- 💡 Suggest features or new detectors
-- 📝 Improve documentation
-- 🔧 Submit pull requests
+-  Report bugs via [GitHub Issues](https://github.com/preethamak/vyper-guard/issues)
+-  Suggest features or new detectors
+-  Improve documentation
+-  Submit pull requests
 
 ### Development Setup
 
@@ -398,8 +398,6 @@ Special thanks to the [Vyper](https://github.com/vyperlang/vyper) team.
 ---
 
 <div align="center">
-
-**⭐ Star us on GitHub!**
 
 Made with 🛡️ for secure smart contract development
 
