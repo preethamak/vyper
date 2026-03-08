@@ -21,12 +21,12 @@ Scan `.vy` files for vulnerabilities and get instant feedback from your terminal
 Vyper Guard is a **fast, accurate static analyzer** built specifically for Vyper smart contracts. It detects security vulnerabilities, logic risks, and best-practice violations before deployment.
 
 **Key Features:**
-- ⚡ Lightning-fast analysis (scan in milliseconds)
-- 🎯 Vyper-native (understands decorators, built-in safety)
-- 🔍 12+ specialized security detectors
-- 🛠️ Auto-fix detected vulnerabilities
-- 📊 Clear security scoring (0-100)
-- 📄 Multiple output formats (CLI, JSON, Markdown)
+-  Lightning-fast analysis (scan in milliseconds)
+-  Vyper-native (understands decorators, built-in safety)
+-  12+ specialized security detectors
+-  Auto-fix detected vulnerabilities
+-  Clear security scoring (0-100)
+-  Multiple output formats (CLI, JSON, Markdown)
 
 ---
 
