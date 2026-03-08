@@ -1,0 +1,115 @@
+[project]
+name = "vyper-guard"
+version = "0.3.2"
+description = "Real-time vulnerability monitoring and auto-remediation for Vyper smart contracts"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "preethamak" }]
+keywords = ["vyper", "security", "smart-contracts", "blockchain", "vulnerability-scanner", "static-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+# Vyper compiler for deep AST analysis (recommended)
+vyper = ["vyper>=0.4.0"]
+# Live monitoring of deployed contracts
+monitor = ["web3>=6.0.0", "aiohttp>=3.9.0"]
+# Auto-remediation with GitHub PR creation
+remediation = ["pygithub>=2.0.0"]
+# All optional features
+all = ["vyper>=0.4.0", "web3>=6.0.0", "aiohttp>=3.9.0", "pygithub>=2.0.0"]
+
+[project.scripts]
+vyper-guard = "guardian.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/preethamak/vyper"
+Repository = "https://github.com/preethamak/vyper"
+Issues = "https://github.com/preethamak/vyper/issues"
+Documentation = "https://github.com/preethamak/vyper/tree/main/docs"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/guardian"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short -q"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: integration tests that need external tools",
+]
+
+[tool.coverage.run]
+source = ["guardian"]
+omit = ["tests/*", "*/monitor/*"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+fail_under = 65
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["guardian"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.5.0",
+]

@@ -1,0 +1,44 @@
+{
+  "templates": [
+    {
+      "id": "add_nonreentrant",
+      "vulnerability_type": "reentrancy",
+      "description": "Add @nonreentrant decorator to an @external function.",
+      "before_pattern": "@external\ndef {function_name}(",
+      "after_pattern": "@external\n@nonreentrant\ndef {function_name}(",
+      "note": "The @nonreentrant decorator prevents reentrant calls into any function with the same lock."
+    },
+    {
+      "id": "wrap_raw_call_assert",
+      "vulnerability_type": "external_call",
+      "description": "Wrap raw_call in an assert to check for success.",
+      "before_pattern": "raw_call({target}, {data})",
+      "after_pattern": "assert raw_call({target}, {data})",
+      "note": "Asserting the return value ensures the transaction reverts on external call failure."
+    },
+    {
+      "id": "add_event_emission",
+      "vulnerability_type": "code_quality",
+      "description": "Add a log statement after state changes.",
+      "before_pattern": "self.{variable} = {value}",
+      "after_pattern": "self.{variable} = {value}\n    log {EventName}(msg.sender, {value})",
+      "note": "Define the event at the top of the contract if it does not already exist."
+    },
+    {
+      "id": "add_access_control",
+      "vulnerability_type": "access_control",
+      "description": "Add msg.sender ownership check.",
+      "before_pattern": "@external\ndef {function_name}(",
+      "after_pattern": "@external\ndef {function_name}(\n    assert msg.sender == self.owner, \"Not owner\"",
+      "note": "Ensure self.owner is initialised in __init__."
+    },
+    {
+      "id": "add_selfdestruct_guard",
+      "vulnerability_type": "self_destruct",
+      "description": "Protect selfdestruct with ownership check.",
+      "before_pattern": "selfdestruct({target})",
+      "after_pattern": "assert msg.sender == self.owner, \"Not owner\"\n    selfdestruct({target})",
+      "note": "Only the owner should be able to destroy the contract."
+    }
+  ]
+}

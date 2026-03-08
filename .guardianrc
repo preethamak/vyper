@@ -1,0 +1,21 @@
+# .guardianrc — Vyper Guard configuration
+# Docs: https://github.com/preethamak/vyper
+
+analysis:
+  # Which detectors to enable ("all" or a list)
+  enabled_detectors:
+    - all
+  # Detectors to skip
+  disabled_detectors: []
+  # Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO
+  severity_threshold: LOW
+
+reporting:
+  # Default output format: cli, json, markdown
+  default_format: cli
+  show_source_snippets: true
+  show_fix_suggestions: true
+
+performance:
+  max_file_size_mb: 10
+  cache_enabled: true

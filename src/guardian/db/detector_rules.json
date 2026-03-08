@@ -1,0 +1,60 @@
+{
+  "detectors": [
+    {
+      "name": "missing_nonreentrant",
+      "category": "reentrancy",
+      "severity": "CRITICAL",
+      "enabled_by_default": true,
+      "description": "Flags @external functions that perform external calls or value transfers without @nonreentrant."
+    },
+    {
+      "name": "unsafe_raw_call",
+      "category": "external_call",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags raw_call() invocations whose success is not asserted or checked."
+    },
+    {
+      "name": "missing_event_emission",
+      "category": "code_quality",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Flags @external functions that modify state without emitting an event."
+    },
+    {
+      "name": "timestamp_dependence",
+      "category": "timestamp_dependence",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Flags use of block.timestamp in conditional logic."
+    },
+    {
+      "name": "integer_overflow",
+      "category": "arithmetic",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags contracts targeting Vyper <0.4.0 which lack native overflow protection."
+    },
+    {
+      "name": "unprotected_selfdestruct",
+      "category": "self_destruct",
+      "severity": "CRITICAL",
+      "enabled_by_default": true,
+      "description": "Flags selfdestruct() calls without access-control checks."
+    },
+    {
+      "name": "dangerous_delegatecall",
+      "category": "delegate_call",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags raw_call() with is_delegate_call=True."
+    },
+    {
+      "name": "unprotected_state_change",
+      "category": "access_control",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags writes to sensitive state variables (owner, admin, ...) without msg.sender checks."
+    }
+  ]
+}
