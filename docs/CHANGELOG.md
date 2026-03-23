@@ -2,6 +2,17 @@
 
 All notable changes to Vyper Guard are documented in this file.
 
+## 2026-03-24 — v0.3.4
+
+### Documentation
+
+- Expanded README with a documentation map for AI triage, agent mode, graph exports, explorer flows, and remediation paths.
+- Clarified maintainer release workflow references and feature entry points.
+
+### Release
+
+- Version bump to `0.3.4` for publishing updated documentation alongside current AI + graph feature set.
+
 ## 2026-03-24 — v0.3.3
 
 ### Added

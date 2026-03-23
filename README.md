@@ -186,6 +186,21 @@ Deductions:
 - LLM agent mode with memory/sandbox support (`agent`, `agent memory`).
 - Improved `stats --graph` HTML dashboard with clearer function-call/control-flow visuals.
 
+### Documentation Map
+
+- Full CLI usage and examples: [docs/USAGE.md](docs/USAGE.md)
+- Detector catalog and rationale: [docs/DETECTORS.md](docs/DETECTORS.md)
+- Installation and maintainer publishing flow: [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- Release notes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
+
+### Feature Quick Pointers
+
+- AI triage: `analyze --ai-triage` (+ `--ai-triage-mode llm` when configured)
+- AI config helper: `ai config set/show`
+- Graph exports: `stats <file> --graph` (`--graph-json`, `--graph-html`)
+- Explorer + verified-source analysis: `explorer`, `analyze-address`
+- Auto-remediation: `analyze --fix`, `--fix-dry-run`, `--fix-report`
+
 ---
 
 ## Maintainer Release Notes (PyPI)
