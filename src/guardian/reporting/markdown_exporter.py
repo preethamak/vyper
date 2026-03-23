@@ -120,6 +120,22 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
             w("")
             w(f"{f.description}")
             w("")
+            if f.why_flagged:
+                w(f"> 🧠 **Why flagged:** {f.why_flagged}")
+                w("")
+            if f.evidence:
+                w("**Evidence:**")
+                for item in f.evidence:
+                    w(f"- `{item}`")
+                w("")
+            if f.why_not_suppressed:
+                w(f"> 🔎 **Why not suppressed:** {f.why_not_suppressed}")
+                w("")
+            if f.semantic_context:
+                w("**Semantic Context:**")
+                for key, value in f.semantic_context.items():
+                    w(f"- `{key}`: `{value}`")
+                w("")
             if f.source_snippet:
                 w("<details><summary>📝 Source Code</summary>")
                 w("")
@@ -132,6 +148,47 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
             if f.fix_suggestion:
                 w(f"> 💡 **Suggested Fix:** {f.fix_suggestion}")
                 w("")
+
+    if report.ai_triage:
+        policy_version = report.ai_triage_policy.get("policy_version", "unknown")
+        policy_status = report.ai_triage_policy.get("status", "unknown")
+
+        w("## 🤖 AI-Assisted Triage")
+        w("")
+        w(f"> Policy: `v{policy_version}` (`{policy_status}`) — deterministic advisory metadata only.")
+        policy_warnings = report.ai_triage_policy.get("warnings", [])
+        if policy_warnings:
+            w(
+                "> Policy warnings: "
+                + "; ".join(str(item) for item in policy_warnings)
+            )
+        w(
+            "> Guardrail: triage is advisory only and cannot override deterministic detector verdicts."
+        )
+        w(
+            "> Confidence uses deterministic scoring (`severity_base + evidence_bonus`, capped at `0.98`)."
+        )
+        w("")
+        w("| Rank | Bucket | Detector | Severity | Confidence | Scoring | Next Step |")
+        w("|-----:|--------|----------|----------|-----------:|---------|-----------|")
+
+        for item in report.ai_triage:
+            scoring = item.get("scoring_rationale", {})
+            scoring_str = (
+                f"{scoring.get('version', '—')} / base={scoring.get('severity_base', '—')} "
+                f"+ bonus={scoring.get('evidence_bonus', '—')}"
+            )
+            w(
+                "| "
+                f"{item.get('priority_rank', '—')} | "
+                f"{item.get('triage_bucket', '—')} | "
+                f"`{item.get('detector', '—')}` | "
+                f"{item.get('severity', '—')} | "
+                f"{item.get('confidence', '—')} | "
+                f"{scoring_str} | "
+                f"{item.get('suggested_next_step', '—')} |"
+            )
+        w("")
 
     w("---")
     w("")

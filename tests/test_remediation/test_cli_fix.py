@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -37,6 +38,22 @@ owner: public(address)
 @view
 def get_owner() -> address:
     return self.owner
+"""
+
+TIER_C_ONLY_SOURCE = """\
+# pragma version ^0.4.0
+
+balances: HashMap[address, uint256]
+
+event Withdrawn:
+    user: address
+
+@external
+@nonreentrant
+def withdraw(amount: uint256):
+    send(msg.sender, amount)
+    self.balances[msg.sender] = 0
+    log Withdrawn(msg.sender)
 """
 
 
@@ -146,5 +163,189 @@ class TestFixCLI:
             fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
             if fixed_path.exists():
                 fixed_path.unlink()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_respects_max_auto_fix_tier_and_skips_tier_c(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(TIER_C_ONLY_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(
+                app,
+                ["analyze", tmp_path, "--fix", "--max-auto-fix-tier", "B"],
+                input="n\n",
+            )
+            assert result.exit_code == 0
+            output = result.output.lower()
+            assert "skipped by risk-tier policy" in output
+
+            fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
+            assert not fixed_path.exists(), "Tier-C-only fixes should not produce patched output at tier B"
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_invalid_max_auto_fix_tier_returns_exit_2(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(
+                app,
+                ["analyze", tmp_path, "--fix", "--max-auto-fix-tier", "Z"],
+            )
+            assert result.exit_code == 2
+        finally:
+            os.unlink(tmp_path)
+
+        def test_fix_uses_config_default_max_auto_fix_tier(self) -> None:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                        root = Path(tmpdir)
+                        contract = root / "contract.vy"
+                        contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
+
+                        (root / ".guardianrc").write_text(
+                                """\
+analysis:
+    enabled_detectors:
+        - all
+    disabled_detectors: []
+    severity_threshold: LOW
+
+reporting:
+    default_format: cli
+    show_source_snippets: true
+    show_fix_suggestions: true
+
+remediation:
+    max_auto_fix_tier: B
+""",
+                                encoding="utf-8",
+                        )
+
+                        result = runner.invoke(app, ["analyze", str(contract), "--fix"], input="n\n")
+                        assert result.exit_code == 0
+                        assert "skipped by risk-tier policy" in result.output.lower()
+
+                        fixed_path = contract.with_suffix(".fixed.vy")
+                        assert not fixed_path.exists()
+
+        def test_fix_cli_tier_overrides_config_default(self) -> None:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                        root = Path(tmpdir)
+                        contract = root / "contract.vy"
+                        contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
+
+                        (root / ".guardianrc").write_text(
+                                """\
+analysis:
+    enabled_detectors:
+        - all
+    disabled_detectors: []
+    severity_threshold: LOW
+
+reporting:
+    default_format: cli
+    show_source_snippets: true
+    show_fix_suggestions: true
+
+remediation:
+    max_auto_fix_tier: B
+""",
+                                encoding="utf-8",
+                        )
+
+                        result = runner.invoke(
+                                app,
+                                ["analyze", str(contract), "--fix", "--max-auto-fix-tier", "C"],
+                                input="n\n",
+                        )
+                        assert result.exit_code == 0
+
+                        fixed_path = contract.with_suffix(".fixed.vy")
+                        assert fixed_path.exists()
+
+    def test_fix_dry_run_does_not_write_patched_file(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(app, ["analyze", tmp_path, "--fix", "--fix-dry-run"])
+            assert result.exit_code == 0
+            assert "dry-run mode" in result.output.lower()
+
+            fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
+            assert not fixed_path.exists()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_dry_run_implies_fix_mode(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(app, ["analyze", tmp_path, "--fix-dry-run"])
+            assert result.exit_code == 0
+            assert "auto-remediation" in result.output.lower()
+            assert "dry-run mode" in result.output.lower()
+
+            fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
+            assert not fixed_path.exists()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_report_writes_json_artifact_in_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            contract = root / "contract.vy"
+            contract.write_text(VULNERABLE_SOURCE, encoding="utf-8")
+            fix_report = root / "remediation-report.json"
+
+            result = runner.invoke(
+                app,
+                [
+                    "analyze",
+                    str(contract),
+                    "--fix-dry-run",
+                    "--fix-report",
+                    str(fix_report),
+                ],
+            )
+            assert result.exit_code == 0
+            assert fix_report.exists()
+
+            data = json.loads(fix_report.read_text(encoding="utf-8"))
+            assert data["file_path"] == str(contract)
+            assert data["dry_run"] is True
+            assert "plan" in data
+            assert "summary" in data
+            assert isinstance(data["generated_fixes"], list)
+
+    def test_fix_report_requires_fix_mode(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "analyze",
+                    tmp_path,
+                    "--fix-report",
+                    str(Path(tmp_path).with_suffix(".remediation.json")),
+                ],
+            )
+            assert result.exit_code == 2
+            assert "--fix-report requires --fix or --fix-dry-run" in result.output
         finally:
             os.unlink(tmp_path)

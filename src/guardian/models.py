@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime, timezone
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +75,19 @@ class DetectorResult(BaseModel):
     end_line_number: int | None = Field(default=None)
     source_snippet: str | None = Field(default=None, description="Relevant source code excerpt.")
     fix_suggestion: str | None = Field(default=None, description="Suggested code fix.")
+    why_flagged: str | None = Field(default=None, description="Short rationale for this finding.")
+    evidence: list[str] = Field(
+        default_factory=list,
+        description="Concrete evidence fragments (source snippets, line references, matched patterns).",
+    )
+    why_not_suppressed: str | None = Field(
+        default=None,
+        description="Why suppression heuristics did not suppress this finding.",
+    )
+    semantic_context: dict[str, str | int | bool | list[str]] = Field(
+        default_factory=dict,
+        description="Lightweight semantic summary for the enclosing function/context.",
+    )
 
 
 class FunctionInfo(BaseModel):
@@ -188,6 +202,14 @@ class AnalysisReport(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     vyper_version: str | None = None
     findings: list[DetectorResult] = Field(default_factory=list)
+    ai_triage: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Optional AI-assisted triage metadata (post-processor only).",
+    )
+    ai_triage_policy: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Policy contract metadata for AI triage payload compatibility/governance.",
+    )
     detectors_run: list[str] = Field(default_factory=list)
     security_score: int = 100
     grade: SecurityGrade = SecurityGrade.A_PLUS

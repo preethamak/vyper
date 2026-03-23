@@ -4,7 +4,7 @@
       "id": "VYPER-2023-NONREENTRANT",
       "title": "Malfunctioning @nonreentrant lock (Vyper <0.3.10)",
       "description": "Incorrect storage slot allocation for @nonreentrant locks allowed reentrancy in certain multi-function scenarios.",
-      "severity": "CRITICAL",
+      "severity": "HIGH",
       "affected_versions": "<0.3.10",
       "cve": "GHSA-5824-2926-9c37",
       "references": [
@@ -23,18 +23,6 @@
         "https://github.com/vyperlang/vyper/security/advisories/GHSA-vxmm-c4qg-qc4v"
       ],
       "remediation": "Upgrade to Vyper >=0.3.8."
-    },
-    {
-      "id": "VYPER-OVERFLOW-PRE040",
-      "title": "Incomplete integer overflow protection (Vyper <0.4.0)",
-      "description": "Vyper versions before 0.4.0 do not have built-in overflow protection for all integer arithmetic operations.",
-      "severity": "HIGH",
-      "affected_versions": "<0.4.0",
-      "cve": null,
-      "references": [
-        "https://docs.vyperlang.org/en/stable/release-notes.html"
-      ],
-      "remediation": "Upgrade to Vyper >=0.4.0 for native overflow checks."
     }
   ]
 }

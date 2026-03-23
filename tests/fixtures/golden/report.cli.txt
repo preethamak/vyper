@@ -1,0 +1,33 @@
+
+╭─────────────────────────╮
+│ 🛡️  Vyper Guard  v<VERSION> │
+╰─────────────────────────╯
+
+  File:    sample.vy
+  Pragma:  ^0.4.0
+
+  ━━━━━━━━━━━━━━━╌╌╌╌╌  77/100  ✅ A — Minor fixes needed
+
+  🟠 1 HIGH  🔵 1 LOW
+
+╭────────────┬────────────────────────────┬───────────────────────────────────────────────┬────────╮
+│    Sev     │ Detector                   │ Title                                         │   Line │
+├────────────┼────────────────────────────┼───────────────────────────────────────────────┼────────┤
+│  🟠 HIGH   │ unsafe_raw_call            │ Unchecked raw_call in withdraw()              │     12 │
+│   🔵 LOW   │ timestamp_dependence       │ Timestamp dependence in settle()              │     30 │
+╰────────────┴────────────────────────────┴───────────────────────────────────────────────┴────────╯
+
+  🟠 HIGH  Unchecked raw_call in withdraw()
+    raw_call return value is not checked.
+    Source:
+      raw_call(msg.sender, b"", value=amount)
+    💡 Fix: Wrap raw_call in assert.
+
+  🔵 LOW  Timestamp dependence in settle()
+    block.timestamp used in condition.
+    Source:
+      if block.timestamp > self.deadline:
+    💡 Fix: Use oracle/time-window checks.
+
+  Detectors run: 2 │ Findings: 2 │ Use --fix to auto-patch
+

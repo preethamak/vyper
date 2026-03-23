@@ -30,6 +30,14 @@ def load_fix_templates() -> list[dict[str, Any]]:
     return _load_json("fix_templates.json").get("templates", [])
 
 
+@lru_cache(maxsize=1)
+def validate_bundled_databases() -> None:
+    """Lightweight smoke check to ensure bundled DB JSON files are readable."""
+    _load_json("known_issues.json")
+    _load_json("detector_rules.json")
+    _load_json("fix_templates.json")
+
+
 def get_fix_template(template_id: str) -> dict[str, Any] | None:
     """Look up a fix template by its ``id`` field."""
     for tpl in load_fix_templates():

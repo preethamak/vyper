@@ -26,6 +26,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from guardian.analyzer.semantic import build_semantic_summary
 from guardian.models import (
     Confidence,
     ContractInfo,
@@ -76,7 +77,16 @@ class BaseDetector(ABC):
         source_snippet: str | None = None,
         fix_suggestion: str | None = None,
         severity: Severity | None = None,
+        why_flagged: str | None = None,
+        evidence: list[str] | None = None,
+        why_not_suppressed: str | None = None,
     ) -> DetectorResult:
+        ev = list(evidence or [])
+        if source_snippet:
+            ev.append(source_snippet)
+        if line_number is not None:
+            ev.append(f"line:{line_number}")
+
         return DetectorResult(
             detector_name=self.NAME,
             severity=severity or self.SEVERITY,
@@ -88,6 +98,9 @@ class BaseDetector(ABC):
             end_line_number=end_line_number,
             source_snippet=source_snippet,
             fix_suggestion=fix_suggestion,
+            why_flagged=why_flagged or description,
+            evidence=ev,
+            why_not_suppressed=why_not_suppressed,
         )
 
 
@@ -122,25 +135,38 @@ _EXTERNAL_CALL_RE = re.compile(
     r"\b(send|raw_call|create_minimal_proxy_to|create_copy_of|create_from_blueprint)\s*\("
 )
 # Matches state mutations (self.xxx = ..., self.xxx[key] = ..., self.xxx[k].field = ...).
-_STATE_WRITE_RE = re.compile(r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*[+\-*]?=")
+# Includes augmented assignments: +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+_STATE_WRITE_RE = re.compile(r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*(?:(?:<<|>>|[+\-*/%&|^])?=)")
 # Matches event emissions (log EventName(...)).
 _LOG_RE = re.compile(r"\blog\s+\w+")
 # Access-control assertion pattern.
 _ACCESS_CONTROL_RE = re.compile(r"\b(assert|require)\s+.*\bmsg\.sender\b")
 # Timestamp usage in conditional.
 _TIMESTAMP_COND_RE = re.compile(
-    r"\b(assert|if)\b.*\bblock\.timestamp\b"
-    r"|\bblock\.timestamp\b.*\b(assert|if)\b"
+    r"\b(?:assert|if|elif|while)\b[^\n#]*\bblock\.timestamp\b"
+    r"|\bblock\.timestamp\b[^\n#]*(?:==|!=|<=|>=|<|>)"
 )
 _TIMESTAMP_USE_RE = re.compile(r"\bblock\.timestamp\b")
-# raw_call with is_delegate_call=True (no DOTALL — match within single lines only)
-_DELEGATECALL_RE = re.compile(r"\braw_call\s*\(.*is_delegate_call\s*=\s*True")
+# raw_call with is_delegate_call=True/1 (supports multi-line calls)
+_DELEGATECALL_RE = re.compile(
+    r"\braw_call\s*\(.*?\bis_delegate_call\s*=\s*(?:True|true|1)\b",
+    re.DOTALL,
+)
 # selfdestruct
 _SELFDESTRUCT_RE = re.compile(r"\bselfdestruct\s*\(")
 # raw_call wrapped in assert  -or-  success checked
 _SAFE_RAW_CALL_RE = re.compile(
-    r"assert\s+raw_call\b|success\s*[:,=].*raw_call|raw_call\(.*\)\s*#\s*checked"
+    r"assert\s+raw_call\b"
+    r"|if\s+not\s+raw_call\b"
+    r"|success\s*[:,=].*raw_call"
+    r"|raw_call\s*\(.*revert_on_failure\s*=\s*(?:True|true|1)\b"
+    r"|raw_call\(.*\)\s*#\s*checked"
 )
+
+
+def _strip_inline_comment(line: str) -> str:
+    """Return line content before an inline comment marker."""
+    return line.split("#", 1)[0]
 # Strict owner-gate: msg.sender == self.<owner> (NOT balance lookups).
 _STRICT_ACL_RE = re.compile(
     r"\b(assert|require)\s+msg\.sender\s*==\s*self\.\w+"
@@ -163,6 +189,7 @@ class MissingNonreentrantDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.REENTRANCY
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
             if func.name in _CONSTRUCTOR_NAMES:
@@ -176,9 +203,19 @@ class MissingNonreentrantDetector(BaseDetector):
             # Also skip functions decorated with @deploy (Vyper 0.4.x constructor)
             if "deploy" in func.decorators:
                 continue
+
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None:
+                continue
+
+            # Semantic-first gate: this detector is only relevant when a
+            # function performs an external interaction and/or writes state.
+            if fn_sem.external_calls == 0 and not fn_sem.state_writes:
+                continue
+
             body = func.body_text
-            has_external_call = bool(_EXTERNAL_CALL_RE.search(body))
-            has_state_write = bool(_STATE_WRITE_RE.search(body))
+            has_external_call = fn_sem.external_calls > 0 or bool(_EXTERNAL_CALL_RE.search(body))
+            has_state_write = bool(fn_sem.state_writes) or bool(_STATE_WRITE_RE.search(body))
 
             if has_external_call:
                 # CRITICAL: external call without reentrancy guard
@@ -307,10 +344,15 @@ class UnsafeRawCallDetector(BaseDetector):
         return any(check_re.search(body_lines[j]) for j in range(end_idx, search_end))
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None or fn_sem.external_calls == 0:
+                continue
+
             for i, line in enumerate(func.body_lines):
-                stripped = line.strip()
+                stripped = _strip_inline_comment(line).strip()
                 if "raw_call(" not in stripped:
                     continue
                 if _SAFE_RAW_CALL_RE.search(stripped):
@@ -323,6 +365,8 @@ class UnsafeRawCallDetector(BaseDetector):
                     continue
                 # For multi-line calls, join and check for captured + max_outsize
                 full_call = self._get_full_call(func.body_lines, i)
+                if _SAFE_RAW_CALL_RE.search(full_call):
+                    continue
                 if self._CAPTURED_RE.search(full_call) and "max_outsize" in full_call:
                     continue
                 abs_line = func.end_line - len(func.body_lines) + 1 + i
@@ -358,6 +402,7 @@ class MissingEventEmissionDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
             if func.name in _LIFECYCLE_NAMES:
@@ -368,9 +413,18 @@ class MissingEventEmissionDetector(BaseDetector):
                 continue
             if func.is_view or func.is_pure:
                 continue
+
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None:
+                continue
+            # Semantic-first gate: this detector is only relevant for
+            # functions that mutate state and do not emit events.
+            if not fn_sem.state_writes or fn_sem.emits_event:
+                continue
+
             body = func.body_text
-            has_state_write = bool(_STATE_WRITE_RE.search(body))
-            has_event = bool(_LOG_RE.search(body))
+            has_state_write = bool(fn_sem.state_writes) or bool(_STATE_WRITE_RE.search(body))
+            has_event = fn_sem.emits_event or bool(_LOG_RE.search(body))
             if has_state_write and not has_event:
                 results.append(
                     self._make_result(
@@ -449,9 +503,10 @@ class TimestampDependenceDetector(BaseDetector):
         for func in contract.functions:
             body = func.body_text
             for i, line in enumerate(func.body_lines):
-                if _TIMESTAMP_COND_RE.search(line):
+                code_line = _strip_inline_comment(line)
+                if _TIMESTAMP_COND_RE.search(code_line):
                     # Skip if this is a timelock comparison
-                    if self._is_timelock_context(line, body):
+                    if self._is_timelock_context(code_line, body):
                         continue
                     abs_line = func.end_line - len(func.body_lines) + 1 + i
                     results.append(
@@ -465,7 +520,7 @@ class TimestampDependenceDetector(BaseDetector):
                             ),
                             confidence=Confidence.MEDIUM,
                             line_number=abs_line,
-                            source_snippet=line.strip(),
+                            source_snippet=code_line.strip(),
                             fix_suggestion=(
                                 "If precision matters, use block.number instead "
                                 "or accept the ~15 s manipulation window."
@@ -582,8 +637,13 @@ class DangerousDelegatecallDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.DELEGATE_CALL
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None or not fn_sem.uses_delegatecall:
+                continue
+
             body = func.body_text
             # Check each line and also the joined body (for multi-line calls)
             has_delegatecall = _DELEGATECALL_RE.search(body)
@@ -643,6 +703,7 @@ class UnprotectedStateChangeDetector(BaseDetector):
     )
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
             if func.name in _CONSTRUCTOR_NAMES:
@@ -657,6 +718,11 @@ class UnprotectedStateChangeDetector(BaseDetector):
             # public-facing — writing to accounting state is expected.
             if func.is_payable:
                 continue
+
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None or not fn_sem.state_writes:
+                continue
+
             body = func.body_text
             m = self._SENSITIVE_PATTERNS.search(body)
             if not m:
@@ -740,8 +806,13 @@ class SendInLoopDetector(BaseDetector):
         )
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None or not fn_sem.external_calls_in_loop:
+                continue
+
             # Use a stack of (indent, is_small_loop) tuples
             loop_stack: list[tuple[int, bool]] = []
             for i, line in enumerate(func.body_lines):
@@ -909,7 +980,25 @@ class CEIViolationDetector(BaseDetector):
     SEVERITY = Severity.HIGH
     VULNERABILITY_TYPE = VulnerabilityType.REENTRANCY
 
+    @staticmethod
+    def _state_write_after_idx(body_lines: list[str], start_idx: int) -> int | None:
+        for i in range(start_idx + 1, len(body_lines)):
+            if _STATE_WRITE_RE.search(body_lines[i].strip()):
+                return i
+        return None
+
+    def _first_cei_violation(self, body_lines: list[str]) -> tuple[int, str] | None:
+        """Return the first external call that has a later state write."""
+        for i, line in enumerate(body_lines):
+            stripped = _strip_inline_comment(line).strip()
+            if not _EXTERNAL_CALL_RE.search(stripped):
+                continue
+            if self._state_write_after_idx(body_lines, i) is not None:
+                return i, stripped
+        return None
+
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
         for func in contract.functions:
             if func.name in _CONSTRUCTOR_NAMES:
@@ -918,42 +1007,44 @@ class CEIViolationDetector(BaseDetector):
                 continue
             if func.is_view or func.is_pure:
                 continue
+
+            fn_sem = semantic.functions.get(func.name)
+            if fn_sem is None:
+                continue
+            # Semantic-first gate: CEI requires both an external interaction
+            # and a state mutation within the same function.
+            if fn_sem.external_calls == 0 or not fn_sem.state_writes:
+                continue
+
             body_lines = func.body_lines
-            first_call_idx: int | None = None
-            first_call_line: str = ""
-            first_write_after_call_idx: int | None = None
-            for i, line in enumerate(body_lines):
-                stripped = line.strip()
-                if first_call_idx is None and _EXTERNAL_CALL_RE.search(stripped):
-                    first_call_idx = i
-                    first_call_line = stripped
-                elif first_call_idx is not None and _STATE_WRITE_RE.search(stripped):
-                    first_write_after_call_idx = i
-                    break
-            if first_call_idx is not None and first_write_after_call_idx is not None:
-                abs_line = func.end_line - len(func.body_lines) + 1 + first_call_idx
-                results.append(
-                    self._make_result(
-                        title=f"CEI violation in {func.name}()",
-                        description=(
-                            f"``{func.name}()`` performs an external call "
-                            f"(``{first_call_line.split('(')[0].strip()}``) "
-                            f"**before** updating state. An attacker can "
-                            f"re-enter the function before the state is "
-                            f"updated. Move all state changes above the "
-                            f"external call (Checks → Effects → Interactions)."
-                        ),
-                        confidence=Confidence.HIGH,
-                        line_number=abs_line,
-                        source_snippet=_excerpt(contract, func),
-                        fix_suggestion=(
-                            "Reorder the function: perform all state updates "
-                            "(self.x = …) BEFORE any external calls "
-                            "(send / raw_call). This is the Checks-Effects-"
-                            "Interactions pattern."
-                        ),
-                    )
+            first_violation = self._first_cei_violation(body_lines)
+            if not first_violation:
+                continue
+
+            first_call_idx, first_call_line = first_violation
+            abs_line = func.end_line - len(func.body_lines) + 1 + first_call_idx
+            results.append(
+                self._make_result(
+                    title=f"CEI violation in {func.name}()",
+                    description=(
+                        f"``{func.name}()`` performs an external call "
+                        f"(``{first_call_line.split('(')[0].strip()}``) "
+                        f"**before** updating state. An attacker can "
+                        f"re-enter the function before the state is "
+                        f"updated. Move all state changes above the "
+                        f"external call (Checks → Effects → Interactions)."
+                    ),
+                    confidence=Confidence.HIGH,
+                    line_number=abs_line,
+                    source_snippet=_excerpt(contract, func),
+                    fix_suggestion=(
+                        "Reorder the function: perform all state updates "
+                        "(self.x = …) BEFORE any external calls "
+                        "(send / raw_call). This is the Checks-Effects-"
+                        "Interactions pattern."
+                    ),
                 )
+            )
         return results
 
 

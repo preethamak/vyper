@@ -1,0 +1,14 @@
+{
+  "policy_version": "1.0.0",
+  "status": "deprecated",
+  "deterministic": true,
+  "can_override_verdict": false,
+  "deprecation": {
+    "announced": true,
+    "sunset_after": "2026-12-31"
+  },
+  "warnings": [
+    "AI triage policy is deprecated and should be migrated soon.",
+    "AI triage policy deprecation announced; sunset after 2026-12-31."
+  ]
+}

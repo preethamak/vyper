@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from guardian.analyzer.semantic import build_semantic_summary
 from guardian.models import (
     Confidence,
     ContractInfo,
@@ -79,19 +80,10 @@ def _find_pragma_source(contract: ContractInfo) -> tuple[int, str]:
 # Pattern-check functions
 # ---------------------------------------------------------------------------
 
-# Matches HashMap[..., DynArray[...]] patterns
-_DYNARRAY_IN_MAP_RE = re.compile(r"HashMap\s*\[.*?,\s*DynArray\s*\[", re.IGNORECASE)
-
-
 def _uses_dynarray_in_mapping(contract: ContractInfo) -> bool:
     """Return True if the contract uses DynArray as a HashMap value type."""
-    for line in contract.lines:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue
-        if _DYNARRAY_IN_MAP_RE.search(stripped):
-            return True
-    return False
+    summary = build_semantic_summary(contract)
+    return summary.uses_dynarray_in_mapping
 
 
 _PATTERN_CHECKS: dict[str, object] = {
@@ -125,6 +117,9 @@ def check_compiler_version(contract: ContractInfo) -> list[DetectorResult]:
                 ),
                 line_number=1,
                 fix_suggestion="# pragma version ^0.4.0",
+                why_flagged="Missing `# pragma version` makes compiler safety posture ambiguous.",
+                evidence=["pragma:missing", "line:1"],
+                why_not_suppressed="No pragma pin found, so suppression rules do not apply.",
             )
         )
         return results
@@ -142,6 +137,9 @@ def check_compiler_version(contract: ContractInfo) -> list[DetectorResult]:
                     f"Could not parse the pragma version string: ``{contract.pragma_version}``."
                 ),
                 line_number=1,
+                why_flagged="Pragma string could not be parsed to semantic version.",
+                evidence=[f"pragma:{contract.pragma_version}", "line:1"],
+                why_not_suppressed="Version parsing failed before advisory suppression could run.",
             )
         )
         return results
@@ -169,6 +167,21 @@ def check_compiler_version(contract: ContractInfo) -> list[DetectorResult]:
                     line_number=pragma_lineno,
                     source_snippet=pragma_text or None,
                     fix_suggestion="# pragma version ^0.4.0",
+                    why_flagged=(
+                        f"Pragma version `{contract.pragma_version}` falls in advisory range "
+                        f"`{affected_range}` for {advisory}."
+                    ),
+                    evidence=[
+                        f"advisory:{advisory}",
+                        f"affected_range:{affected_range}",
+                        f"pragma:{contract.pragma_version}",
+                        f"line:{pragma_lineno}",
+                    ],
+                    why_not_suppressed=(
+                        "Pattern gate satisfied."
+                        if pattern_check_name is not None
+                        else "Advisory applies unconditionally for matching versions."
+                    ),
                 )
             )
 

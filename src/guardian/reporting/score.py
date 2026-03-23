@@ -7,6 +7,7 @@ provides a standalone ``score_report`` convenience function.
 
 from __future__ import annotations
 
+from guardian.analyzer.static import _compute_score
 from guardian.models import AnalysisReport, SecurityGrade, Severity
 
 
@@ -16,10 +17,7 @@ def score_report(report: AnalysisReport) -> tuple[int, SecurityGrade]:
     This is a thin wrapper — the report already stores these values, but
     callers may want a standalone function for re-calculation.
     """
-    score = 100
-    for f in report.findings:
-        score -= f.severity.score_penalty
-    score = max(0, score)
+    score = _compute_score(report.findings)
     return score, SecurityGrade.from_score(score)
 
 

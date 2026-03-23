@@ -1,6 +1,6 @@
 # Detectors
 
-Vyper Guard ships with **12 context-aware detectors** specifically designed for Vyper smart contracts. Each detector operates on source-level parsing — no Vyper compiler required.
+Vyper Guard ships with **11 pluggable detectors** plus an always-on compiler version check (`compiler_version_check`). Each detector operates on source-level parsing — no Vyper compiler required.
 
 All detectors include **smart false-positive suppression** to avoid flagging well-known safe patterns used in production DeFi contracts.
 
@@ -10,8 +10,8 @@ All detectors include **smart false-positive suppression** to avoid flagging wel
 |---|----------|----------|----------|-------------------|----------|
 | 1 | `missing_nonreentrant` | CRITICAL/MEDIUM | Reentrancy | ✅ Access control | ✅ |
 | 2 | `unsafe_raw_call` | HIGH | External Call | ✅ safeTransfer | ✅ |
-| 3 | `missing_event_emission` | MEDIUM | Code Quality | — | ✅ |
-| 4 | `timestamp_dependence` | MEDIUM | Timestamp | ✅ Timelocks | ✅ |
+| 3 | `missing_event_emission` | LOW | Code Quality | — | ✅ |
+| 4 | `timestamp_dependence` | LOW | Timestamp | ✅ Timelocks | ✅ |
 | 5 | `integer_overflow` | HIGH | Arithmetic | ✅ Built-in protection | ✅ |
 | 6 | `unprotected_selfdestruct` | CRITICAL | Self-Destruct | — | ✅ |
 | 7 | `dangerous_delegatecall` | HIGH/CRITICAL | Delegate Call | — | ✅ |
@@ -19,7 +19,7 @@ All detectors include **smart false-positive suppression** to avoid flagging wel
 | 9 | `send_in_loop` | HIGH | Denial of Service | ✅ Bounded loops | ✅ |
 | 10 | `unchecked_subtraction` | HIGH | Input Validation | — | ✅ |
 | 11 | `cei_violation` | HIGH | Reentrancy | — | ✅ |
-| 12 | `compiler_version_check` | CRITICAL/HIGH/INFO | Compiler Bug | ✅ Pattern check | ✅ |
+| 12 | `compiler_version_check` | HIGH/INFO | Compiler Bug | ✅ Pattern check | ✅ |
 
 ---
 
@@ -84,7 +84,7 @@ raw_call(target, data)           # ← return value silently ignored
 
 ## 3. Missing Event Emission — Code Quality
 
-**Severity:** MEDIUM  
+**Severity:** LOW  
 **Confidence:** MEDIUM
 
 Detects `@external` functions that modify state (`self.x = ...`) but do not emit an event (`log`). Events are essential for off-chain indexing and transparency.
@@ -102,7 +102,7 @@ def set_owner(new_owner: address):
 
 ## 4. Timestamp Dependence
 
-**Severity:** MEDIUM  
+**Severity:** LOW  
 **Confidence:** MEDIUM
 
 Detects usage of `block.timestamp` in conditional logic (`assert`, `if`). Miners can manipulate the timestamp by ~15 seconds.
@@ -284,11 +284,19 @@ Each finding deducts from a base score of 100:
 
 | Severity | Points |
 |----------|--------|
-| CRITICAL | -25 |
-| HIGH | -15 |
+| CRITICAL | -40 |
+| HIGH | -20 |
 | MEDIUM | -8 |
 | LOW | -3 |
-| INFO | 0 |
+| INFO | -1 |
+
+Each severity tier is capped in code to avoid one class dominating the entire score:
+
+- CRITICAL max deduction: 50
+- HIGH max deduction: 40
+- MEDIUM max deduction: 20
+- LOW max deduction: 10
+- INFO max deduction: 5
 
 **Grades:**
 

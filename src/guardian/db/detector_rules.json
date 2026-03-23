@@ -17,14 +17,14 @@
     {
       "name": "missing_event_emission",
       "category": "code_quality",
-      "severity": "MEDIUM",
+      "severity": "LOW",
       "enabled_by_default": true,
       "description": "Flags @external functions that modify state without emitting an event."
     },
     {
       "name": "timestamp_dependence",
       "category": "timestamp_dependence",
-      "severity": "MEDIUM",
+      "severity": "LOW",
       "enabled_by_default": true,
       "description": "Flags use of block.timestamp in conditional logic."
     },
@@ -33,7 +33,7 @@
       "category": "arithmetic",
       "severity": "HIGH",
       "enabled_by_default": true,
-      "description": "Flags contracts targeting Vyper <0.4.0 which lack native overflow protection."
+      "description": "Flags explicit unsafe arithmetic calls (unsafe_add/sub/mul/div) that bypass Vyper built-in overflow protection."
     },
     {
       "name": "unprotected_selfdestruct",
@@ -55,6 +55,34 @@
       "severity": "HIGH",
       "enabled_by_default": true,
       "description": "Flags writes to sensitive state variables (owner, admin, ...) without msg.sender checks."
+    },
+    {
+      "name": "send_in_loop",
+      "category": "denial_of_service",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags send()/raw_call() inside unbounded loops (DoS risk)."
+    },
+    {
+      "name": "unchecked_subtraction",
+      "category": "input_validation",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags self.x -= y without a preceding sufficient-balance/assertion guard."
+    },
+    {
+      "name": "cei_violation",
+      "category": "reentrancy",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags external calls that occur before state updates (Checks-Effects-Interactions violation)."
+    },
+    {
+      "name": "compiler_version_check",
+      "category": "compiler_bug",
+      "severity": "HIGH/INFO",
+      "enabled_by_default": true,
+      "description": "Always-on pragma/version vulnerability checks for known Vyper compiler advisories."
     }
   ]
 }

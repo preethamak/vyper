@@ -1,6 +1,6 @@
 [project]
 name = "vyper-guard"
-version = "0.3.2"
+version = "0.3.3"
 description = "Real-time vulnerability monitoring and auto-remediation for Vyper smart contracts"
 readme = "README.md"
 license = { text = "MIT" }
@@ -58,6 +58,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/guardian"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/guardian",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+    "/docs/USAGE.md",
+    "/docs/DETECTORS.md",
+    "/docs/INSTALLATION.md",
+    "/docs/CHANGELOG.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -89,7 +101,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = ["E501", "B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["guardian"]

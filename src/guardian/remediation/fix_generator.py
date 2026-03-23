@@ -18,6 +18,33 @@ from guardian.models import (
 from guardian.remediation.ast_manipulator import CodePatcher, Patch, generate_diff
 from guardian.remediation.validator import FixValidator
 
+REMEDIATION_POLICY_VERSION = "1.0.0"
+ALLOWED_RISK_TIERS: tuple[str, ...] = ("A", "B", "C")
+_RISK_TIER_ORDER: dict[str, int] = {"A": 1, "B": 2, "C": 3}
+
+# Tier guardrails are intentionally explicit and versioned through
+# remediation_policy_contract() so downstream tooling can validate behavior.
+_TIER_RULES: dict[str, dict[str, object]] = {
+    "A": {
+        "description": "Low-risk mechanical edits (safe to auto-apply)",
+        "auto_apply_allowed": True,
+        "requires_manual_review": False,
+        "expected_change_kind": "behavioral_patch",
+    },
+    "B": {
+        "description": "Moderate-risk edits (review recommended)",
+        "auto_apply_allowed": True,
+        "requires_manual_review": True,
+        "expected_change_kind": "behavioral_patch",
+    },
+    "C": {
+        "description": "Advisory/manual-refactor prompts",
+        "auto_apply_allowed": True,
+        "requires_manual_review": True,
+        "expected_change_kind": "advisory_annotation",
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Result model
 # ---------------------------------------------------------------------------
@@ -33,6 +60,7 @@ class FixResult:
     diff: str = ""
     patched_lines: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    risk_tier: str = "B"
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +122,11 @@ class FixGenerator:
                 finding=finding,
                 description=f"No auto-fix available for {finding.detector_name}.",
                 applied=False,
+                risk_tier="C",
             )
-        return handler(self, finding)
+        result = handler(self, finding)
+        result.risk_tier = _RISK_TIER_BY_DETECTOR.get(finding.detector_name, "B")
+        return result
 
     # -- Handler helpers -----------------------------------------------------
 
@@ -548,6 +579,147 @@ _HANDLERS: dict[str, object] = {
     "timestamp_dependence": _fix_timestamp_dependence,
     "dangerous_delegatecall": _fix_dangerous_delegatecall,
 }
+
+
+# Phase 5 prep: remediation risk tiers
+# - Tier A: low-risk mechanical edits (safe to auto-apply)
+# - Tier B: moderate-risk edits (review recommended)
+# - Tier C: advisory/manual refactor prompts
+_RISK_TIER_BY_DETECTOR: dict[str, str] = {
+    "missing_nonreentrant": "A",
+    "unsafe_raw_call": "A",
+    "missing_event_emission": "B",
+    "unprotected_state_change": "B",
+    "unprotected_selfdestruct": "B",
+    "unchecked_subtraction": "B",
+    "dangerous_delegatecall": "B",
+    "integer_overflow": "A",
+    "compiler_version_check": "A",
+    "cei_violation": "C",
+    "send_in_loop": "C",
+    "timestamp_dependence": "C",
+}
+
+
+def risk_tier_for_detector(detector_name: str) -> str:
+    """Return remediation risk tier for a detector name."""
+    return _RISK_TIER_BY_DETECTOR.get(detector_name, "B")
+
+
+def remediation_tier_rules() -> dict[str, dict[str, object]]:
+    """Return tier guardrail metadata keyed by risk tier."""
+    return {tier: dict(rule) for tier, rule in _TIER_RULES.items()}
+
+
+def remediation_planning_contract(findings: list[DetectorResult], max_auto_fix_tier: str) -> dict[str, object]:
+    """Return a deterministic planning contract for fix eligibility by tier.
+
+    The contract is intentionally simple so CLI/CI/reporting surfaces can
+    reason about expected remediation scope before applying patches.
+    """
+    cap = max_auto_fix_tier.upper()
+    if cap not in _RISK_TIER_ORDER:
+        cap = "C"
+    max_rank = _RISK_TIER_ORDER[cap]
+
+    eligible_by_tier = {tier: 0 for tier in ALLOWED_RISK_TIERS}
+    skipped_by_tier = {tier: 0 for tier in ALLOWED_RISK_TIERS}
+
+    for finding in findings:
+        tier = risk_tier_for_detector(finding.detector_name)
+        rank = _RISK_TIER_ORDER.get(tier, 99)
+        if rank <= max_rank:
+            eligible_by_tier[tier] = eligible_by_tier.get(tier, 0) + 1
+        else:
+            skipped_by_tier[tier] = skipped_by_tier.get(tier, 0) + 1
+
+    return {
+        "policy_version": REMEDIATION_POLICY_VERSION,
+        "max_auto_fix_tier": cap,
+        "eligibility_rule": "tier_rank <= max_auto_fix_tier",
+        "eligible_by_tier": eligible_by_tier,
+        "skipped_by_tier": skipped_by_tier,
+        "eligible_total": sum(eligible_by_tier.values()),
+        "skipped_total": sum(skipped_by_tier.values()),
+    }
+
+
+def validate_fix_results_by_tier(results: list[FixResult]) -> list[str]:
+    """Return validation errors for generated fixes under tier guardrails."""
+    errors: list[str] = []
+    for r in results:
+        tier = (r.risk_tier or "").upper()
+        if tier not in ALLOWED_RISK_TIERS:
+            errors.append(f"{r.finding.detector_name}: invalid risk tier {r.risk_tier}")
+            continue
+
+        if not r.applied:
+            continue
+
+        if tier == "C":
+            payload = f"{r.description}\n{r.diff}".lower()
+            if not any(token in payload for token in ("fixme", "manual", "review", "note", "refactor")):
+                errors.append(
+                    f"{r.finding.detector_name}: tier C applied fix must remain advisory/manual"
+                )
+
+        if tier == "A" and "fixme" in r.diff.lower():
+            errors.append(f"{r.finding.detector_name}: tier A fix should not add advisory FIXME comments")
+
+    return errors
+
+
+def remediation_policy_contract() -> dict[str, object]:
+    """Return remediation policy contract metadata.
+
+    Exposes versioned risk-tier assignment so tooling/CI can validate
+    auto-remediation behavior.
+    """
+    return {
+        "policy_version": REMEDIATION_POLICY_VERSION,
+        "risk_tiers": list(ALLOWED_RISK_TIERS),
+        "tier_rules": remediation_tier_rules(),
+        "detector_tiers": dict(sorted(_RISK_TIER_BY_DETECTOR.items())),
+        "planning_contract": {
+            "eligibility_rule": "tier_rank <= max_auto_fix_tier",
+            "default_max_auto_fix_tier": "C",
+        },
+    }
+
+
+def validate_remediation_policy() -> list[str]:
+    """Return policy errors (empty list means valid)."""
+    errors: list[str] = []
+    for detector, tier in _RISK_TIER_BY_DETECTOR.items():
+        if tier not in ALLOWED_RISK_TIERS:
+            errors.append(f"{detector}: invalid risk tier {tier}")
+
+    for tier in ALLOWED_RISK_TIERS:
+        if tier not in _TIER_RULES:
+            errors.append(f"{tier}: missing tier rule")
+
+    extra_tier_rules = set(_TIER_RULES) - set(ALLOWED_RISK_TIERS)
+    for tier in sorted(extra_tier_rules):
+        errors.append(f"{tier}: tier rule defined but not allowed")
+
+    for tier, rule in _TIER_RULES.items():
+        if not isinstance(rule.get("auto_apply_allowed"), bool):
+            errors.append(f"{tier}: auto_apply_allowed must be bool")
+        if not isinstance(rule.get("requires_manual_review"), bool):
+            errors.append(f"{tier}: requires_manual_review must be bool")
+        expected_kind = rule.get("expected_change_kind")
+        if expected_kind not in {"behavioral_patch", "advisory_annotation"}:
+            errors.append(f"{tier}: invalid expected_change_kind {expected_kind}")
+
+    missing = set(_HANDLERS) - set(_RISK_TIER_BY_DETECTOR)
+    for detector in sorted(missing):
+        errors.append(f"{detector}: missing risk tier mapping")
+
+    extra = set(_RISK_TIER_BY_DETECTOR) - set(_HANDLERS)
+    for detector in sorted(extra):
+        errors.append(f"{detector}: risk tier mapped but no handler")
+
+    return errors
 
 
 # ---------------------------------------------------------------------------

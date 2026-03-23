@@ -1,0 +1,58 @@
+{
+  "$schema": "vyper-guard-report/v1",
+  "tool": {
+    "name": "vyper-guard",
+    "version": "<VERSION>",
+    "url": "https://github.com/preethamak/vyper"
+  },
+  "environment": {
+    "python": "<PYTHON>",
+    "platform": "<PLATFORM>"
+  },
+  "file_path": "contracts/sample.vy",
+  "timestamp": "2026-01-02T03:04:00+00:00",
+  "vyper_version": "^0.4.0",
+  "security_score": 77,
+  "grade": "A",
+  "grade_label": "Minor fixes needed",
+  "summary": {
+    "total": 2,
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "low": 1,
+    "info": 0
+  },
+  "findings": [
+    {
+      "detector": "unsafe_raw_call",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "vulnerability_type": "external_call",
+      "title": "Unchecked raw_call in withdraw()",
+      "description": "raw_call return value is not checked.",
+      "line_number": 12,
+      "end_line_number": null,
+      "source_snippet": "raw_call(msg.sender, b\"\", value=amount)",
+      "fix_suggestion": "Wrap raw_call in assert.",
+      "fingerprint": "<FINGERPRINT>"
+    },
+    {
+      "detector": "timestamp_dependence",
+      "severity": "LOW",
+      "confidence": "MEDIUM",
+      "vulnerability_type": "timestamp_dependence",
+      "title": "Timestamp dependence in settle()",
+      "description": "block.timestamp used in condition.",
+      "line_number": 30,
+      "end_line_number": null,
+      "source_snippet": "if block.timestamp > self.deadline:",
+      "fix_suggestion": "Use oracle/time-window checks.",
+      "fingerprint": "<FINGERPRINT>"
+    }
+  ],
+  "detectors_run": [
+    "unsafe_raw_call",
+    "timestamp_dependence"
+  ]
+}

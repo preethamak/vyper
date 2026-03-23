@@ -10,7 +10,16 @@ from guardian.models import (
     Severity,
     VulnerabilityType,
 )
-from guardian.remediation.fix_generator import FixGenerator, FixResult
+from guardian.remediation.fix_generator import (
+    ALLOWED_RISK_TIERS,
+    FixGenerator,
+    FixResult,
+    remediation_planning_contract,
+    remediation_policy_contract,
+    remediation_tier_rules,
+    validate_fix_results_by_tier,
+    validate_remediation_policy,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -196,6 +205,12 @@ class TestFixUnsafeRawCall:
         if fix:
             assert "assert" in fix.diff
 
+    def test_raw_call_fix_is_tier_a(self) -> None:
+        _, results, _ = _analyze_and_fix(RAW_CALL_CONTRACT)
+        fix = _has_fix_for(results, "unsafe_raw_call")
+        assert fix is not None
+        assert fix.risk_tier == "A"
+
 
 # ---------------------------------------------------------------------------
 # Tests: Fix for unprotected state change
@@ -297,6 +312,12 @@ class TestFixCEIViolation:
         assert fix is not None
         assert "manual" in fix.description.lower() or "review" in fix.description.lower()
 
+    def test_cei_fix_is_tier_c(self) -> None:
+        _, results, _ = _analyze_and_fix(CEI_VIOLATION_CONTRACT)
+        fix = _has_fix_for(results, "cei_violation")
+        assert fix is not None
+        assert fix.risk_tier == "C"
+
 
 # ---------------------------------------------------------------------------
 # Tests: Fix for timestamp dependence
@@ -311,6 +332,38 @@ class TestFixTimestampDependence:
             f"Expected timestamp fix. Fixes: {[r.finding.detector_name for r in results]}"
         )
         assert "NOTE" in patched or "timestamp" in patched.lower()
+
+
+class TestRemediationPolicyContract:
+    def test_policy_contract_is_well_formed(self) -> None:
+        policy = remediation_policy_contract()
+        assert policy["policy_version"] == "1.0.0"
+        assert set(policy["risk_tiers"]) == set(ALLOWED_RISK_TIERS)
+        assert isinstance(policy["detector_tiers"], dict)
+        assert isinstance(policy["tier_rules"], dict)
+        assert policy["planning_contract"]["eligibility_rule"] == "tier_rank <= max_auto_fix_tier"
+
+    def test_tier_rules_have_expected_shape(self) -> None:
+        rules = remediation_tier_rules()
+        assert set(rules) == set(ALLOWED_RISK_TIERS)
+        assert rules["A"]["requires_manual_review"] is False
+        assert rules["C"]["expected_change_kind"] == "advisory_annotation"
+
+    def test_planning_contract_counts_eligible_and_skipped(self) -> None:
+        findings, _, _ = _analyze_and_fix(REENTRANCY_CONTRACT)
+        contract = remediation_planning_contract(findings, max_auto_fix_tier="B")
+        assert contract["max_auto_fix_tier"] == "B"
+        assert contract["eligibility_rule"] == "tier_rank <= max_auto_fix_tier"
+        assert contract["eligible_total"] + contract["skipped_total"] == len(findings)
+
+    def test_policy_validation_has_no_errors(self) -> None:
+        errors = validate_remediation_policy()
+        assert errors == []
+
+    def test_fix_results_validation_accepts_real_pipeline_output(self) -> None:
+        _, results, _ = _analyze_and_fix(REENTRANCY_CONTRACT)
+        errors = validate_fix_results_by_tier(results)
+        assert errors == []
 
 
 # ---------------------------------------------------------------------------

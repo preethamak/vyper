@@ -52,13 +52,9 @@ vyper-guard --version
 vyper-guard analyze vault.vy
 ```
 
-### Analyze a Folder
+---
 
-```bash
-vyper-guard analyze contracts/
-```
-
-### Generate JSON Report
+## Output Formats
 
 ```bash
 vyper-guard analyze vault.vy --format json --output report.json
@@ -119,34 +115,20 @@ Next Steps:
 
 ## Detectors
 
-Vyper Guard includes **12 specialized detectors** for Vyper contracts:
-
-### 🔴 Critical Vulnerabilities
-
-| Detector | Description |
-|----------|-------------|
-| `cei_violation` | External calls before state updates (reentrancy) |
-| `unprotected_selfdestruct` | Selfdestruct without access control |
-| `missing_nonreentrant` | Value transfers without `@nonreentrant` |
-
-### 🟠 High Severity
-
-| Detector | Description |
-|----------|-------------|
-| `unsafe_raw_call` | `raw_call()` without return value checks |
-| `dangerous_delegatecall` | Delegatecall with untrusted data |
-| `unprotected_state_change` | State changes without authorization |
-| `integer_overflow` | Unsafe arithmetic operations |
-| `send_in_loop` | Value transfers in loops (DoS risk) |
-| `unchecked_subtraction` | Subtraction without underflow check |
-
-### 🟡 Medium & 🔵 Low
-
-| Detector | Severity | Description |
-|----------|----------|-------------|
-| `compiler_version_check` | MEDIUM | Known vulnerable compiler versions |
-| `missing_event_emission` | LOW | State changes without events |
-| `timestamp_dependence` | LOW | Logic depends on `block.timestamp` |
+| # | Detector | Severity | What It Finds |
+|---|----------|----------|---------------|
+| 1 | `missing_nonreentrant` | CRITICAL | External functions with value transfers but no `@nonreentrant` |
+| 2 | `unsafe_raw_call` | HIGH | `raw_call()` without return value checks |
+| 3 | `missing_event_emission` | LOW | State-changing functions that emit no event |
+| 4 | `timestamp_dependence` | LOW | `block.timestamp` used in short-window conditional logic |
+| 5 | `integer_overflow` | HIGH | `unsafe_add`, `unsafe_sub`, `unsafe_mul`, `unsafe_div` usage |
+| 6 | `unprotected_selfdestruct` | CRITICAL | `selfdestruct()` without access control |
+| 7 | `dangerous_delegatecall` | HIGH | `raw_call()` with `is_delegate_call=True` |
+| 8 | `unprotected_state_change` | HIGH | Writes to sensitive state without `msg.sender` check |
+| 9 | `send_in_loop` | HIGH | `send()` / `raw_call()` inside `for` loops |
+| 10 | `unchecked_subtraction` | HIGH | `self.x -= amount` without overflow guard |
+| 11 | `cei_violation` | HIGH | External call before state update |
+| 12 | `compiler_version_check` | HIGH / INFO | Known Vyper compiler CVEs (GHSA-5824, GHSA-vxmm) |
 
 ---
 
@@ -176,38 +158,63 @@ Deductions:
 
 **Recommended minimum for production: 80+**
 
+> Note: `analyze` currently accepts a single `.vy` file path, not a directory path.
+
 ---
 
 ## CLI Commands
 
+| Command | Description |
+|---------|-------------|
+| `vyper-guard analyze <file>` | Scan a contract for vulnerabilities |
+| `vyper-guard analyze <file> --fix` | Scan and auto-fix vulnerabilities |
+| `vyper-guard stats <file>` | Show contract structure and complexity |
+| `vyper-guard diff <file1> <file2>` | Compare security posture of two contracts |
+| `vyper-guard benchmark [dir]` | Run lightweight detector quality benchmark on a corpus |
+| `vyper-guard detectors` | List all available detectors |
+| `vyper-guard init` | Create a `.guardianrc` config file |
+| `vyper-guard monitor <address>` | Live-monitor a deployed contract |
+| `vyper-guard baseline <address>` | Build normal-behaviour baseline |
+| `vyper-guard version` | Show version and environment info |
+
+---
+
+## Recent 0.3.x Highlights
+
+- Explorer-first workflow (`explorer`, `analyze-address`) for verified source analysis.
+- AI advisory triage with deterministic fallback (`--ai-triage`).
+- LLM agent mode with memory/sandbox support (`agent`, `agent memory`).
+- Improved `stats --graph` HTML dashboard with clearer function-call/control-flow visuals.
+
+---
+
+## Maintainer Release Notes (PyPI)
+
+Use explicit artifacts (avoid `dist/*` when old versions exist):
+
 ```bash
-# Analyze
-vyper-guard analyze <file_or_directory>
-
-# With options
-vyper-guard analyze vault.vy --format json --output report.json
-vyper-guard analyze vault.vy --severity HIGH
-vyper-guard analyze vault.vy --fix
-
-# Other commands
-vyper-guard stats vault.vy              # Show contract stats
-vyper-guard diff v1.vy v2.vy           # Compare contracts
-vyper-guard detectors                   # List all detectors
-vyper-guard version                     # Show version
+rm -rf dist build
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/vyper_guard-<VERSION>-py3-none-any.whl dist/vyper_guard-<VERSION>.tar.gz
 ```
 
-### Options
+Rules:
 
-```
---format TEXT       Output: cli, json, markdown [default: cli]
---output PATH       Save report to file
---fix              Auto-fix vulnerabilities
---severity TEXT    Filter by: LOW, MEDIUM, HIGH, CRITICAL
---detectors TEXT   Comma-separated detector list
---exclude TEXT     Exclude patterns
---verbose          Enable verbose logging
---config PATH      Configuration file path
-```
+1. Bump version in both `pyproject.toml` and `src/guardian/__init__.py` first.
+2. Never re-upload an already published version.
+3. For token auth, set `TWINE_USERNAME=__token__` and use full `pypi-...` token as password.
+
+---
+
+## What To Do After a Scan
+
+1. Fix **CRITICAL** issues first.
+2. Resolve **HIGH** severity before deployment.
+3. Improve **MEDIUM/LOW** findings for audit quality.
+4. Re-run scans until security posture is stable.
+
+Recommended minimum score for production: **80+**
 
 ---
 

@@ -115,6 +115,17 @@ def execute(target: address, data: Bytes[1024]):
         results = _run_detector(UnsafeRawCallDetector, source)
         assert len(results) == 0
 
+    def test_ignores_raw_call_with_revert_on_failure_true(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def execute(target: address, data: Bytes[1024]):
+    raw_call(target, data, revert_on_failure=True)
+"""
+        results = _run_detector(UnsafeRawCallDetector, source)
+        assert len(results) == 0
+
 
 # -------------------------------------------------------------------------
 # MissingEventEmissionDetector
@@ -309,6 +320,17 @@ def upgrade(target: address, data: Bytes[1024]):
         assert len(results) == 1
         # Should still flag it, but at HIGH not CRITICAL
         assert results[0].severity == Severity.HIGH
+
+    def test_flags_delegatecall_when_boolean_is_lowercase_true(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def upgrade(target: address, data: Bytes[1024]):
+    raw_call(target, data, is_delegate_call=true)
+"""
+        results = _run_detector(DangerousDelegatecallDetector, source)
+        assert len(results) == 1
 
 
 # -------------------------------------------------------------------------
@@ -866,6 +888,25 @@ def __init__():
         results = _run_detector(CEIViolationDetector, source)
         assert len(results) == 0
 
+    def test_flags_when_later_external_call_precedes_state_write(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+balances: HashMap[address, uint256]
+
+@external
+def mixed(amount: uint256):
+    # Early interaction that is not followed by any write yet.
+    raw_call(msg.sender, b"", value=0)
+    self.balances[msg.sender] -= amount
+    # Later interaction followed by a write should still be flagged.
+    send(msg.sender, amount)
+    self.balances[msg.sender] = 0
+"""
+        results = _run_detector(CEIViolationDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.HIGH
+
 
 # -------------------------------------------------------------------------
 # HashMap event emission (updated regex)
@@ -1169,6 +1210,21 @@ coins: address[2]
 # @version ^0.3.7
 
 user_tokens: HashMap[address, DynArray[uint256, 100]]
+"""
+        contract = parse_vyper_source(source, "<test>")
+        results = check_compiler_version(contract)
+        advisory_ids = [r.title for r in results]
+        assert any("GHSA-vxmm" in t for t in advisory_ids)
+
+    def test_ghsa_vxmm_flagged_with_multiline_dynarray_in_map(self) -> None:
+        """GHSA-vxmm SHOULD be flagged for multiline HashMap[..., DynArray[...]] too."""
+        source = """\
+# @version ^0.3.7
+
+user_tokens: HashMap[
+    address,
+    DynArray[uint256, 100]
+]
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)

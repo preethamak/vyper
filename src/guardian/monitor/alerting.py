@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import smtplib
 import time
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from email.message import EmailMessage
@@ -154,6 +155,12 @@ class AlertManager:
     # ------------------------------------------------------------------
 
     def _dispatch_webhook(self, alert: MonitorAlert) -> None:
+        url = str(self.webhook_url or "").strip()
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            log.error("Webhook dispatch blocked: unsupported URL scheme '%s'", parsed.scheme or "")
+            return
+
         payload = {
             "text": f"[{alert.severity.value}] {alert.title}",
             "blocks": [
@@ -172,15 +179,15 @@ class AlertManager:
                 }
             ],
         }
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            self.webhook_url,  # type: ignore[arg-type]
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 - scheme validated above
                 log.debug("Webhook response %d", resp.status)
         except Exception as exc:
             log.error("Webhook dispatch failed: %s", exc)

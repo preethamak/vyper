@@ -17,6 +17,8 @@ from pathlib import Path
 
 from guardian.analyzer.ast_parser import parse_vyper_source
 from guardian.analyzer.compiler_check import check_compiler_version
+from guardian.analyzer.confidence import calibrate_confidence
+from guardian.analyzer.semantic import build_semantic_summary
 from guardian.analyzer.vyper_detector import ALL_DETECTORS, DETECTOR_MAP, BaseDetector
 from guardian.models import (
     AnalysisReport,
@@ -102,6 +104,8 @@ class StaticAnalyzer:
         severity_order = list(Severity)
         threshold_idx = severity_order.index(self._severity_threshold)
         filtered = [f for f in all_findings if severity_order.index(f.severity) <= threshold_idx]
+        calibrate_confidence(filtered)
+        _attach_semantic_context(filtered, contract)
 
         # 4. Compute score.
         score = _compute_score(filtered)
@@ -170,3 +174,37 @@ def _compute_score(findings: list[DetectorResult]) -> int:
         total_deduction += min(raw, _TIER_CAPS[sev])
 
     return max(0, 100 - total_deduction)
+
+
+def _attach_semantic_context(findings: list[DetectorResult], contract: ContractInfo) -> None:
+    """Attach semantic summary snippets to findings when a containing function is known."""
+    summary = build_semantic_summary(contract)
+
+    for finding in findings:
+        if finding.line_number is None:
+            continue
+
+        func = next(
+            (
+                f
+                for f in contract.functions
+                if f.start_line <= finding.line_number <= f.end_line
+            ),
+            None,
+        )
+        if func is None:
+            continue
+
+        sem = summary.functions.get(func.name)
+        if sem is None:
+            continue
+
+        finding.semantic_context = {
+            "function": sem.name,
+            "state_reads": sorted(sem.state_reads),
+            "state_writes": sorted(sem.state_writes),
+            "external_calls": sem.external_calls,
+            "external_calls_in_loop": sem.external_calls_in_loop,
+            "emits_event": sem.emits_event,
+            "uses_delegatecall": sem.uses_delegatecall,
+        }

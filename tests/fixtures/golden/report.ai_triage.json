@@ -1,0 +1,52 @@
+[
+  {
+    "finding_index": 0,
+    "priority_rank": 1,
+    "detector": "unsafe_raw_call",
+    "title": "Unchecked raw_call in withdraw()",
+    "severity": "HIGH",
+    "triage_bucket": "review_now",
+    "confidence": 0.86,
+    "scoring_rationale": {
+      "version": "triage_scoring_v1",
+      "severity_base": 0.86,
+      "evidence_bonus": 0.0,
+      "evidence_count": 0,
+      "final_confidence": 0.86
+    },
+    "suggested_next_step": "Assert/capture raw_call success and add failure handling.",
+    "evidence_refs": [],
+    "provenance": {
+      "mode": "heuristic_postprocessor_v1",
+      "policy_version": "1.0.0",
+      "deterministic": true,
+      "model": null,
+      "can_override_verdict": false
+    }
+  },
+  {
+    "finding_index": 1,
+    "priority_rank": 2,
+    "detector": "timestamp_dependence",
+    "title": "Timestamp dependence in settle()",
+    "severity": "LOW",
+    "triage_bucket": "review_later",
+    "confidence": 0.64,
+    "scoring_rationale": {
+      "version": "triage_scoring_v1",
+      "severity_base": 0.64,
+      "evidence_bonus": 0.0,
+      "evidence_count": 0,
+      "final_confidence": 0.64
+    },
+    "suggested_next_step": "Review finding context and apply the provided deterministic fix suggestion.",
+    "evidence_refs": [],
+    "provenance": {
+      "mode": "heuristic_postprocessor_v1",
+      "policy_version": "1.0.0",
+      "deterministic": true,
+      "model": null,
+      "can_override_verdict": false
+    }
+  }
+]

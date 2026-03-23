@@ -9,7 +9,9 @@ Loads settings from (in priority order):
 
 from __future__ import annotations
 
+import contextlib
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -51,12 +53,54 @@ class PerformanceConfig(BaseModel):
     cache_directory: str = ".guardian_cache"
 
 
+class RemediationConfig(BaseModel):
+    """Settings controlling auto-remediation behavior."""
+
+    max_auto_fix_tier: str = Field(default="C", description="A | B | C")
+
+
+class AITriageConfig(BaseModel):
+    """Settings for optional AI-assisted triage post-processing."""
+
+    enabled: bool = False
+    min_severity: str = Field(default="LOW", description="INFO | LOW | MEDIUM | HIGH | CRITICAL")
+    max_items: int = Field(default=50, ge=1)
+    policy_status: str = Field(default="stable", description="stable | experimental | deprecated")
+    deprecation_announced: bool = False
+    deprecation_sunset_after: str | date | None = None
+
+
+class LLMConfig(BaseModel):
+    """Settings for LLM-backed triage/agent features."""
+
+    enabled: bool = False
+    provider: str = Field(default="openai_compatible")
+    model: str = Field(default="gpt-5")
+    base_url: str = Field(default="https://api.openai.com/v1")
+    api_key: str | None = None
+    temperature: float = Field(default=0.1, ge=0.0, le=1.0)
+    max_items: int = Field(default=50, ge=1)
+    memory_file: str = Field(default=".guardian_agent_memory.jsonl")
+
+
+class ExplorerConfig(BaseModel):
+    """Settings for block explorer lookups."""
+
+    provider: str = Field(default="etherscan")
+    network: str = Field(default="ethereum")
+    api_key: str | None = None
+
+
 class GuardianConfig(BaseModel):
     """Top-level configuration container."""
 
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     reporting: ReportingConfig = Field(default_factory=ReportingConfig)
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
+    remediation: RemediationConfig = Field(default_factory=RemediationConfig)
+    ai_triage: AITriageConfig = Field(default_factory=AITriageConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    explorer: ExplorerConfig = Field(default_factory=ExplorerConfig)
 
 
 def _find_config_file(start_dir: Path | None = None) -> Path | None:
@@ -105,6 +149,70 @@ def load_config(
 
     if env_thresh := os.getenv("GUARDIAN_SEVERITY_THRESHOLD"):
         raw.setdefault("analysis", {})["severity_threshold"] = env_thresh
+
+    if env_fix_tier := os.getenv("GUARDIAN_MAX_AUTO_FIX_TIER"):
+        raw.setdefault("remediation", {})["max_auto_fix_tier"] = env_fix_tier
+
+    if env_ai_triage := os.getenv("GUARDIAN_AI_TRIAGE"):
+        raw.setdefault("ai_triage", {})["enabled"] = env_ai_triage.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    if env_ai_min := os.getenv("GUARDIAN_AI_TRIAGE_MIN_SEVERITY"):
+        raw.setdefault("ai_triage", {})["min_severity"] = env_ai_min
+
+    if env_ai_max := os.getenv("GUARDIAN_AI_TRIAGE_MAX_ITEMS"):
+        with contextlib.suppress(ValueError):
+            raw.setdefault("ai_triage", {})["max_items"] = int(env_ai_max)
+
+    if env_ai_status := os.getenv("GUARDIAN_AI_TRIAGE_POLICY_STATUS"):
+        raw.setdefault("ai_triage", {})["policy_status"] = env_ai_status
+
+    if env_ai_dep_ann := os.getenv("GUARDIAN_AI_TRIAGE_DEPRECATION_ANNOUNCED"):
+        raw.setdefault("ai_triage", {})["deprecation_announced"] = env_ai_dep_ann.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    if env_ai_dep_sunset := os.getenv("GUARDIAN_AI_TRIAGE_DEPRECATION_SUNSET_AFTER"):
+        raw.setdefault("ai_triage", {})["deprecation_sunset_after"] = env_ai_dep_sunset
+
+    if env_llm_enabled := os.getenv("GUARDIAN_LLM_ENABLED"):
+        raw.setdefault("llm", {})["enabled"] = env_llm_enabled.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    if env_llm_provider := os.getenv("GUARDIAN_LLM_PROVIDER"):
+        raw.setdefault("llm", {})["provider"] = env_llm_provider
+
+    if env_llm_model := os.getenv("GUARDIAN_LLM_MODEL"):
+        raw.setdefault("llm", {})["model"] = env_llm_model
+
+    if env_llm_url := os.getenv("GUARDIAN_LLM_BASE_URL"):
+        raw.setdefault("llm", {})["base_url"] = env_llm_url
+
+    if env_llm_key := os.getenv("GUARDIAN_LLM_API_KEY"):
+        raw.setdefault("llm", {})["api_key"] = env_llm_key
+
+    if env_llm_mem := os.getenv("GUARDIAN_LLM_MEMORY_FILE"):
+        raw.setdefault("llm", {})["memory_file"] = env_llm_mem
+
+    if env_exp_provider := os.getenv("GUARDIAN_EXPLORER_PROVIDER"):
+        raw.setdefault("explorer", {})["provider"] = env_exp_provider
+
+    if env_exp_net := os.getenv("GUARDIAN_EXPLORER_NETWORK"):
+        raw.setdefault("explorer", {})["network"] = env_exp_net
+
+    if env_exp_key := os.getenv("GUARDIAN_EXPLORER_API_KEY"):
+        raw.setdefault("explorer", {})["api_key"] = env_exp_key
 
     return GuardianConfig.model_validate(raw)
 

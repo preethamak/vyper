@@ -17,6 +17,7 @@ event WithdrawExecuted:
 balances: public(HashMap[address, uint256])
 total_deposits: public(uint256)
 
+@nonreentrant
 @external
 @payable
 def deposit():
@@ -37,6 +38,7 @@ def withdraw(amount: uint256):
     self.total_deposits -= amount
     log WithdrawExecuted(msg.sender)
 
+@nonreentrant
 @external
 def transfer(to: address, amount: uint256):
     # VULNERABILITY: No @nonreentrant and no event

@@ -39,10 +39,18 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
             "source_snippet": f.source_snippet,
             "fix_suggestion": f.fix_suggestion,
         }
+        if f.why_flagged:
+            fd["why_flagged"] = f.why_flagged
+        if f.evidence:
+            fd["evidence"] = f.evidence
+        if f.why_not_suppressed:
+            fd["why_not_suppressed"] = f.why_not_suppressed
+        if f.semantic_context:
+            fd["semantic_context"] = f.semantic_context
         fd["fingerprint"] = _fingerprint(fd)
         findings.append(fd)
 
-    return {
+    payload = {
         "$schema": "vyper-guard-report/v1",
         "tool": {
             "name": "vyper-guard",
@@ -70,6 +78,13 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
         "findings": findings,
         "detectors_run": report.detectors_run,
     }
+
+    if report.ai_triage:
+        payload["ai_triage"] = report.ai_triage
+    if report.ai_triage_policy:
+        payload["ai_triage_policy"] = report.ai_triage_policy
+
+    return payload
 
 
 def export_json(report: AnalysisReport, output_path: str | Path | None = None) -> str:

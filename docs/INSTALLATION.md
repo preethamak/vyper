@@ -61,6 +61,32 @@ uv run ruff check src/ tests/
 uv run pre-commit install
 ```
 
+## Publishing to PyPI (Maintainers)
+
+```bash
+# 1) bump versions in:
+#    pyproject.toml
+#    src/guardian/__init__.py
+
+# 2) clean + build
+rm -rf dist build
+python -m build
+python -m twine check dist/*
+
+# 3) upload only the target version artifacts
+export TWINE_USERNAME=__token__
+export TWINE_PASSWORD='pypi-<YOUR_FULL_TOKEN>'
+python -m twine upload \
+  dist/vyper_guard-<VERSION>-py3-none-any.whl \
+  dist/vyper_guard-<VERSION>.tar.gz
+```
+
+Notes:
+
+- Prefer explicit filenames over `dist/*` to avoid uploading stale artifacts.
+- A version can be published only once on PyPI.
+- Keep token secret and rotate if exposed.
+
 ## Requirements
 
 - **Python 3.10+** (3.11 or 3.12 recommended)
