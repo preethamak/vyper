@@ -155,13 +155,12 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
 
         w("## 🤖 AI-Assisted Triage")
         w("")
-        w(f"> Policy: `v{policy_version}` (`{policy_status}`) — deterministic advisory metadata only.")
+        w(
+            f"> Policy: `v{policy_version}` (`{policy_status}`) — deterministic advisory metadata only."
+        )
         policy_warnings = report.ai_triage_policy.get("warnings", [])
         if policy_warnings:
-            w(
-                "> Policy warnings: "
-                + "; ".join(str(item) for item in policy_warnings)
-            )
+            w("> Policy warnings: " + "; ".join(str(item) for item in policy_warnings))
         w(
             "> Guardrail: triage is advisory only and cannot override deterministic detector verdicts."
         )

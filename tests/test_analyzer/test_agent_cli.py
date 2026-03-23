@@ -112,7 +112,9 @@ def test_agent_memory_tail_stats_clear_cycle() -> None:
         stats_payload = json.loads(stats.stdout)
         assert stats_payload["entries"] == 2
 
-        tail = runner.invoke(app, ["agent-memory", "tail", "--memory-file", str(memory), "--limit", "1"])
+        tail = runner.invoke(
+            app, ["agent-memory", "tail", "--memory-file", str(memory), "--limit", "1"]
+        )
         assert tail.exit_code == 0
         tail_payload = json.loads(tail.stdout)
         assert len(tail_payload) == 1

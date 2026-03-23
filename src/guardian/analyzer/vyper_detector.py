@@ -167,6 +167,8 @@ _SAFE_RAW_CALL_RE = re.compile(
 def _strip_inline_comment(line: str) -> str:
     """Return line content before an inline comment marker."""
     return line.split("#", 1)[0]
+
+
 # Strict owner-gate: msg.sender == self.<owner> (NOT balance lookups).
 _STRICT_ACL_RE = re.compile(
     r"\b(assert|require)\s+msg\.sender\s*==\s*self\.\w+"

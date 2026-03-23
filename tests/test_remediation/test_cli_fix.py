@@ -183,7 +183,9 @@ class TestFixCLI:
             assert "skipped by risk-tier policy" in output
 
             fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
-            assert not fixed_path.exists(), "Tier-C-only fixes should not produce patched output at tier B"
+            assert not fixed_path.exists(), (
+                "Tier-C-only fixes should not produce patched output at tier B"
+            )
         finally:
             os.unlink(tmp_path)
 
@@ -203,13 +205,13 @@ class TestFixCLI:
             os.unlink(tmp_path)
 
         def test_fix_uses_config_default_max_auto_fix_tier(self) -> None:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                        root = Path(tmpdir)
-                        contract = root / "contract.vy"
-                        contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                contract = root / "contract.vy"
+                contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
 
-                        (root / ".guardianrc").write_text(
-                                """\
+                (root / ".guardianrc").write_text(
+                    """\
 analysis:
     enabled_detectors:
         - all
@@ -224,24 +226,24 @@ reporting:
 remediation:
     max_auto_fix_tier: B
 """,
-                                encoding="utf-8",
-                        )
+                    encoding="utf-8",
+                )
 
-                        result = runner.invoke(app, ["analyze", str(contract), "--fix"], input="n\n")
-                        assert result.exit_code == 0
-                        assert "skipped by risk-tier policy" in result.output.lower()
+                result = runner.invoke(app, ["analyze", str(contract), "--fix"], input="n\n")
+                assert result.exit_code == 0
+                assert "skipped by risk-tier policy" in result.output.lower()
 
-                        fixed_path = contract.with_suffix(".fixed.vy")
-                        assert not fixed_path.exists()
+                fixed_path = contract.with_suffix(".fixed.vy")
+                assert not fixed_path.exists()
 
         def test_fix_cli_tier_overrides_config_default(self) -> None:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                        root = Path(tmpdir)
-                        contract = root / "contract.vy"
-                        contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                contract = root / "contract.vy"
+                contract.write_text(TIER_C_ONLY_SOURCE, encoding="utf-8")
 
-                        (root / ".guardianrc").write_text(
-                                """\
+                (root / ".guardianrc").write_text(
+                    """\
 analysis:
     enabled_detectors:
         - all
@@ -256,18 +258,18 @@ reporting:
 remediation:
     max_auto_fix_tier: B
 """,
-                                encoding="utf-8",
-                        )
+                    encoding="utf-8",
+                )
 
-                        result = runner.invoke(
-                                app,
-                                ["analyze", str(contract), "--fix", "--max-auto-fix-tier", "C"],
-                                input="n\n",
-                        )
-                        assert result.exit_code == 0
+                result = runner.invoke(
+                    app,
+                    ["analyze", str(contract), "--fix", "--max-auto-fix-tier", "C"],
+                    input="n\n",
+                )
+                assert result.exit_code == 0
 
-                        fixed_path = contract.with_suffix(".fixed.vy")
-                        assert fixed_path.exists()
+                fixed_path = contract.with_suffix(".fixed.vy")
+                assert fixed_path.exists()
 
     def test_fix_dry_run_does_not_write_patched_file(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:

@@ -23,7 +23,9 @@ def check_time() -> bool:
 """
 
 
-def _write_project_files(root: Path, *, severity: str = "HIGH", default_format: str = "json") -> Path:
+def _write_project_files(
+    root: Path, *, severity: str = "HIGH", default_format: str = "json"
+) -> Path:
     contract = root / "contract.vy"
     contract.write_text(LOW_ONLY_CONTRACT, encoding="utf-8")
 

@@ -185,11 +185,7 @@ def _attach_semantic_context(findings: list[DetectorResult], contract: ContractI
             continue
 
         func = next(
-            (
-                f
-                for f in contract.functions
-                if f.start_line <= finding.line_number <= f.end_line
-            ),
+            (f for f in contract.functions if f.start_line <= finding.line_number <= f.end_line),
             None,
         )
         if func is None:

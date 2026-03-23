@@ -232,7 +232,9 @@ class ExplorerClient:
         )
 
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-        compiler_info = metadata.get("compiler") if isinstance(metadata.get("compiler"), dict) else {}
+        compiler_info = (
+            metadata.get("compiler") if isinstance(metadata.get("compiler"), dict) else {}
+        )
         settings = metadata.get("settings") if isinstance(metadata.get("settings"), dict) else {}
         optimizer = settings.get("optimizer") if isinstance(settings.get("optimizer"), dict) else {}
 

@@ -46,17 +46,11 @@ def clock() -> bool:
 
 def test_ai_triage_does_not_mutate_findings() -> None:
     report = StaticAnalyzer().analyze_source(SOURCE, "sample.vy")
-    before = [
-        (f.detector_name, f.title, f.severity.value, f.line_number)
-        for f in report.findings
-    ]
+    before = [(f.detector_name, f.title, f.severity.value, f.line_number) for f in report.findings]
 
     apply_ai_triage(report)
 
-    after = [
-        (f.detector_name, f.title, f.severity.value, f.line_number)
-        for f in report.findings
-    ]
+    after = [(f.detector_name, f.title, f.severity.value, f.line_number) for f in report.findings]
     assert after == before
     assert len(report.ai_triage) == len(report.findings)
     assert all(item["provenance"]["can_override_verdict"] is False for item in report.ai_triage)
@@ -164,20 +158,20 @@ def test_cli_output_renders_ai_triage_section() -> None:
 
 
 def test_ai_triage_policy_applies_min_severity_and_max_items() -> None:
-        report = StaticAnalyzer().analyze_source(MIXED_SOURCE, "sample.vy")
-        apply_ai_triage(report, min_severity=Severity.HIGH, max_items=1)
+    report = StaticAnalyzer().analyze_source(MIXED_SOURCE, "sample.vy")
+    apply_ai_triage(report, min_severity=Severity.HIGH, max_items=1)
 
-        assert len(report.ai_triage) == 1
-        assert report.ai_triage[0]["severity"] in {"CRITICAL", "HIGH"}
+    assert len(report.ai_triage) == 1
+    assert report.ai_triage[0]["severity"] in {"CRITICAL", "HIGH"}
 
 
 def test_config_can_enable_ai_triage_without_cli_flag() -> None:
-        with runner.isolated_filesystem():
-                contract = Path("contract.vy")
-                contract.write_text(SOURCE, encoding="utf-8")
+    with runner.isolated_filesystem():
+        contract = Path("contract.vy")
+        contract.write_text(SOURCE, encoding="utf-8")
 
-                Path(".guardianrc").write_text(
-                        """\
+        Path(".guardianrc").write_text(
+            """\
 analysis:
     enabled_detectors:
         - all
@@ -194,24 +188,24 @@ ai_triage:
     min_severity: LOW
     max_items: 5
 """,
-                        encoding="utf-8",
-                )
+            encoding="utf-8",
+        )
 
-                result = runner.invoke(app, ["analyze", str(contract)])
+        result = runner.invoke(app, ["analyze", str(contract)])
 
-                assert result.exit_code == 0
-                payload = json.loads(result.stdout)
-                assert "ai_triage" in payload
-                assert payload["ai_triage"]
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert "ai_triage" in payload
+        assert payload["ai_triage"]
 
 
 def test_cli_output_surfaces_policy_warnings_from_config() -> None:
-        with runner.isolated_filesystem():
-                contract = Path("contract.vy")
-                contract.write_text(SOURCE, encoding="utf-8")
+    with runner.isolated_filesystem():
+        contract = Path("contract.vy")
+        contract.write_text(SOURCE, encoding="utf-8")
 
-                Path(".guardianrc").write_text(
-                        """\
+        Path(".guardianrc").write_text(
+            """\
 analysis:
     enabled_detectors:
         - all
@@ -231,10 +225,10 @@ ai_triage:
     deprecation_announced: true
     deprecation_sunset_after: 2026-12-31
 """,
-                        encoding="utf-8",
-                )
+            encoding="utf-8",
+        )
 
-                result = runner.invoke(app, ["analyze", str(contract)], color=False)
-                assert result.exit_code == 0
-                combined = result.stdout + result.stderr
-                assert "Policy warning:" in combined
+        result = runner.invoke(app, ["analyze", str(contract)], color=False)
+        assert result.exit_code == 0
+        combined = result.stdout + result.stderr
+        assert "Policy warning:" in combined

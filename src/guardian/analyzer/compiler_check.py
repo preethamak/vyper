@@ -80,6 +80,7 @@ def _find_pragma_source(contract: ContractInfo) -> tuple[int, str]:
 # Pattern-check functions
 # ---------------------------------------------------------------------------
 
+
 def _uses_dynarray_in_mapping(contract: ContractInfo) -> bool:
     """Return True if the contract uses DynArray as a HashMap value type."""
     summary = build_semantic_summary(contract)

@@ -219,7 +219,9 @@ def _print_help_screen() -> None:
     console.print(
         Columns(
             [
-                Panel(groups, title="[bold]Command Map[/bold]", border_style=ACCENT, box=box.ROUNDED),
+                Panel(
+                    groups, title="[bold]Command Map[/bold]", border_style=ACCENT, box=box.ROUNDED
+                ),
                 Panel(quick, title="[bold]Examples[/bold]", border_style=ACCENT, box=box.ROUNDED),
             ],
             equal=True,
@@ -311,7 +313,11 @@ def _validate_contract_path(file_path: Path) -> None:
 
     # Reject files with only comments/whitespace because they cannot be analysed meaningfully.
     text = file_path.read_text(encoding="utf-8", errors="ignore")
-    code_lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    code_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
     if not code_lines:
         console.print(
             Panel(
@@ -552,13 +558,13 @@ def analyze(
     try:
         triage_min = Severity(triage_min_name)
     except ValueError:
-        console.print(
-            f"[{ERR}]Invalid ai-triage minimum severity: {triage_min_name}[/{ERR}]"
-        )
+        console.print(f"[{ERR}]Invalid ai-triage minimum severity: {triage_min_name}[/{ERR}]")
         raise typer.Exit(code=2) from None
 
     triage_max_items = ai_triage_max_items or cfg.ai_triage.max_items
-    triage_mode = (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    triage_mode = (
+        (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    )
     if triage_enabled:
         if triage_mode == "llm":
             from guardian.agents.llm_triage import LLMTriageError, apply_llm_triage
@@ -602,9 +608,7 @@ def analyze(
                 policy_status=cfg.ai_triage.policy_status,
                 deprecation_announced=cfg.ai_triage.deprecation_announced,
                 deprecation_sunset_after=(
-                    str(deprecation_sunset_after)
-                    if deprecation_sunset_after is not None
-                    else None
+                    str(deprecation_sunset_after) if deprecation_sunset_after is not None else None
                 ),
             )
 
@@ -711,8 +715,12 @@ def scan(
 
 @ai_config_app.command(name="set")
 def ai_config_set(
-    key: str = typer.Argument(..., help="Config key: provider | model | api-key | base-url | enabled."),
-    value: str | None = typer.Argument(None, help="Config value. Omit for interactive secret prompt for api-key."),
+    key: str = typer.Argument(
+        ..., help="Config key: provider | model | api-key | base-url | enabled."
+    ),
+    value: str | None = typer.Argument(
+        None, help="Config value. Omit for interactive secret prompt for api-key."
+    ),
 ) -> None:
     """Set user-level AI config in ~/.guardianrc."""
     normalized = key.strip().lower()
@@ -788,7 +796,9 @@ def ai_config_show() -> None:
     typer.echo(_json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _infer_internal_call_edges(function_names: list[str], body_text: str, caller: str) -> list[tuple[str, str]]:
+def _infer_internal_call_edges(
+    function_names: list[str], body_text: str, caller: str
+) -> list[tuple[str, str]]:
     edges: list[tuple[str, str]] = []
     for name in function_names:
         if name == caller:
@@ -800,9 +810,15 @@ def _infer_internal_call_edges(function_names: list[str], body_text: str, caller
 
 @app.command(name="ast")
 def ast_view(
-    file_path: Path = typer.Argument(..., exists=True, readable=True, help="Path to the .vy contract."),
-    format: str = typer.Option("cli", "--format", "-f", help="Output format: cli, json, markdown, mermaid."),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Write output artifact to file."),
+    file_path: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the .vy contract."
+    ),
+    format: str = typer.Option(
+        "cli", "--format", "-f", help="Output format: cli, json, markdown, mermaid."
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Write output artifact to file."
+    ),
 ) -> None:
     """Show parsed contract structure (AST-like summary)."""
     _validate_contract_path(file_path)
@@ -888,7 +904,7 @@ def ast_view(
             lines.append(f"  Contract --> {node}")
         for fn in contract.functions:
             node = f"FN_{fn.name}"
-            lines.append(f"  {node}[fn: {fn.name}]" )
+            lines.append(f"  {node}[fn: {fn.name}]")
             lines.append(f"  Contract --> {node}")
         text = "\n".join(lines)
     else:
@@ -911,9 +927,15 @@ def ast_view(
 
 @app.command(name="flow")
 def flow_view(
-    file_path: Path = typer.Argument(..., exists=True, readable=True, help="Path to the .vy contract."),
-    format: str = typer.Option("cli", "--format", "-f", help="Output format: cli, json, markdown, mermaid."),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Write output artifact to file."),
+    file_path: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the .vy contract."
+    ),
+    format: str = typer.Option(
+        "cli", "--format", "-f", help="Output format: cli, json, markdown, mermaid."
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Write output artifact to file."
+    ),
 ) -> None:
     """Show function/call-flow summary using semantic extraction."""
     _validate_contract_path(file_path)
@@ -938,11 +960,21 @@ def flow_view(
                 "start_line": f.start_line,
                 "end_line": f.end_line,
                 "internal_calls": [dst for src, dst in edges if src == f.name],
-                "state_reads": sorted(summary.functions.get(f.name).state_reads) if f.name in summary.functions else [],
-                "state_writes": sorted(summary.functions.get(f.name).state_writes) if f.name in summary.functions else [],
-                "external_calls": summary.functions.get(f.name).external_calls if f.name in summary.functions else 0,
-                "external_calls_in_loop": summary.functions.get(f.name).external_calls_in_loop if f.name in summary.functions else False,
-                "emits_event": summary.functions.get(f.name).emits_event if f.name in summary.functions else False,
+                "state_reads": sorted(summary.functions.get(f.name).state_reads)
+                if f.name in summary.functions
+                else [],
+                "state_writes": sorted(summary.functions.get(f.name).state_writes)
+                if f.name in summary.functions
+                else [],
+                "external_calls": summary.functions.get(f.name).external_calls
+                if f.name in summary.functions
+                else 0,
+                "external_calls_in_loop": summary.functions.get(f.name).external_calls_in_loop
+                if f.name in summary.functions
+                else False,
+                "emits_event": summary.functions.get(f.name).emits_event
+                if f.name in summary.functions
+                else False,
             }
             for f in contract.functions
         ],
@@ -998,8 +1030,12 @@ def flow_view(
 
 @app.command(name="fix")
 def fix_cmd(
-    file_path: Path = typer.Argument(..., exists=True, readable=True, help="Path to the .vy contract."),
-    ai: bool = typer.Option(False, "--ai", help="Enable AI-assisted audit orchestration before remediation."),
+    file_path: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the .vy contract."
+    ),
+    ai: bool = typer.Option(
+        False, "--ai", help="Enable AI-assisted audit orchestration before remediation."
+    ),
     format: str | None = typer.Option(None, "--format", "-f"),
     output: Path | None = typer.Option(None, "--output", "-o"),
     detectors: str | None = typer.Option(None, "--detectors", "-d"),
@@ -1040,14 +1076,26 @@ def fix_cmd(
 
 @app.command(name="analyze-address")
 def analyze_address(
-    address: str = typer.Argument(..., help="Contract address to analyze via block explorer source."),
-    provider: str | None = typer.Option(None, "--provider", help="Explorer provider (default from config)."),
-    network: str | None = typer.Option(None, "--network", help="Network name (default from config)."),
+    address: str = typer.Argument(
+        ..., help="Contract address to analyze via block explorer source."
+    ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="Explorer provider (default from config)."
+    ),
+    network: str | None = typer.Option(
+        None, "--network", help="Network name (default from config)."
+    ),
     api_key: str | None = typer.Option(None, "--api-key", help="Explorer API key (or config/env)."),
-    format: str | None = typer.Option(None, "--format", "-f", help="Output format: cli, json, markdown."),
+    format: str | None = typer.Option(
+        None, "--format", "-f", help="Output format: cli, json, markdown."
+    ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write report to this file."),
-    save_source: Path | None = typer.Option(None, "--save-source", help="Persist fetched source to file."),
-    detectors: str | None = typer.Option(None, "--detectors", "-d", help="Comma-separated detector names."),
+    save_source: Path | None = typer.Option(
+        None, "--save-source", help="Persist fetched source to file."
+    ),
+    detectors: str | None = typer.Option(
+        None, "--detectors", "-d", help="Comma-separated detector names."
+    ),
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
     ci: bool = typer.Option(False, "--ci"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -1139,7 +1187,9 @@ def analyze_address(
         raise typer.Exit(code=2) from None
 
     triage_max_items = ai_triage_max_items or cfg.ai_triage.max_items
-    triage_mode = (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    triage_mode = (
+        (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    )
     if triage_enabled:
         if triage_mode == "llm":
             from guardian.agents.llm_triage import LLMTriageError, apply_llm_triage
@@ -1183,9 +1233,7 @@ def analyze_address(
                 policy_status=cfg.ai_triage.policy_status,
                 deprecation_announced=cfg.ai_triage.deprecation_announced,
                 deprecation_sunset_after=(
-                    str(deprecation_sunset_after)
-                    if deprecation_sunset_after is not None
-                    else None
+                    str(deprecation_sunset_after) if deprecation_sunset_after is not None else None
                 ),
             )
 
@@ -1233,13 +1281,25 @@ def explorer_lookup(
         help="Only for config set: provider | network | api-key.",
     ),
     value: str | None = typer.Argument(None, help="Only for config set: value to persist."),
-    provider: str | None = typer.Option(None, "--provider", help="Explorer provider (default from config)."),
-    network: str | None = typer.Option(None, "--network", help="Network name (default from config)."),
-    api_key: str | None = typer.Option(None, "--api-key", help="Explorer API key (or GUARDIAN_EXPLORER_API_KEY)."),
-    private_key: str | None = typer.Option(None, "--private-key", help="Optional wallet private key (not stored)."),
+    provider: str | None = typer.Option(
+        None, "--provider", help="Explorer provider (default from config)."
+    ),
+    network: str | None = typer.Option(
+        None, "--network", help="Network name (default from config)."
+    ),
+    api_key: str | None = typer.Option(
+        None, "--api-key", help="Explorer API key (or GUARDIAN_EXPLORER_API_KEY)."
+    ),
+    private_key: str | None = typer.Option(
+        None, "--private-key", help="Optional wallet private key (not stored)."
+    ),
     format: str = typer.Option("cli", "--format", "-f", help="Output format: cli | json."),
-    save_json: Path | None = typer.Option(None, "--save-json", help="Save explorer metadata JSON to file."),
-    save_source: Path | None = typer.Option(None, "--save-source", help="Save verified source code to file."),
+    save_json: Path | None = typer.Option(
+        None, "--save-json", help="Save explorer metadata JSON to file."
+    ),
+    save_source: Path | None = typer.Option(
+        None, "--save-source", help="Save verified source code to file."
+    ),
     save_abi: Path | None = typer.Option(None, "--save-abi", help="Save ABI JSON to file."),
 ) -> None:
     """Fetch contract metadata (source/ABI/functions), or manage explorer config.
@@ -1266,7 +1326,9 @@ def explorer_lookup(
             current_key = cfg.explorer.api_key or ""
             redacted = ""
             if current_key:
-                redacted = (current_key[:4] + "..." + current_key[-4:]) if len(current_key) > 8 else "***"
+                redacted = (
+                    (current_key[:4] + "..." + current_key[-4:]) if len(current_key) > 8 else "***"
+                )
 
             payload = {
                 "provider": cfg.explorer.provider,
@@ -1295,7 +1357,9 @@ def explorer_lookup(
             target_key = key_map[normalized_key]
             if normalized_key == "api-key":
                 if value is None:
-                    value = typer.prompt("Enter explorer API key", hide_input=True, confirmation_prompt=True)
+                    value = typer.prompt(
+                        "Enter explorer API key", hide_input=True, confirmation_prompt=True
+                    )
                 resolved: object = value.strip()
                 if not resolved:
                     console.print(f"[{ERR}]API key cannot be empty.[/{ERR}]")
@@ -1352,7 +1416,9 @@ def explorer_lookup(
         if len(pk) != 64 or any(ch not in "0123456789abcdef" for ch in pk):
             console.print(f"[{ERR}]Invalid private key format.[/{ERR}]")
             raise typer.Exit(code=2)
-        console.print(f"[{WARN}]Private key supplied ([/{WARN}]{_mask_secret(private_key)}[{WARN}]); not persisted.[/{WARN}]")
+        console.print(
+            f"[{WARN}]Private key supplied ([/{WARN}]{_mask_secret(private_key)}[{WARN}]); not persisted.[/{WARN}]"
+        )
 
     try:
         client = ExplorerClient(
@@ -1412,17 +1478,33 @@ def explorer_lookup(
 def agent_run(
     prompt: str | None = typer.Argument(None, help="Agent prompt/question."),
     file_path: Path | None = typer.Option(None, "--file", help="Optional local .vy file context."),
-    address: str | None = typer.Option(None, "--address", help="Optional contract address context via explorer."),
+    address: str | None = typer.Option(
+        None, "--address", help="Optional contract address context via explorer."
+    ),
     model: str | None = typer.Option(None, "--model", help="LLM model (default from config)."),
     base_url: str | None = typer.Option(None, "--base-url", help="LLM API base URL."),
-    api_key: str | None = typer.Option(None, "--api-key", help="LLM API key (or GUARDIAN_LLM_API_KEY)."),
-    explorer_provider: str | None = typer.Option(None, "--explorer-provider", help="Explorer provider override for --address context."),
-    explorer_network: str | None = typer.Option(None, "--explorer-network", help="Explorer network override for --address context."),
-    explorer_api_key: str | None = typer.Option(None, "--explorer-api-key", help="Explorer API key override for --address context."),
+    api_key: str | None = typer.Option(
+        None, "--api-key", help="LLM API key (or GUARDIAN_LLM_API_KEY)."
+    ),
+    explorer_provider: str | None = typer.Option(
+        None, "--explorer-provider", help="Explorer provider override for --address context."
+    ),
+    explorer_network: str | None = typer.Option(
+        None, "--explorer-network", help="Explorer network override for --address context."
+    ),
+    explorer_api_key: str | None = typer.Option(
+        None, "--explorer-api-key", help="Explorer API key override for --address context."
+    ),
     memory_file: Path | None = typer.Option(None, "--memory-file", help="JSONL memory file path."),
-    sandbox_script: Path | None = typer.Option(None, "--sandbox-script", help="Optional python script to run in sandbox."),
-    save_context: Path | None = typer.Option(None, "--save-context", help="Save assembled agent context as JSON before LLM call."),
-    save_output: Path | None = typer.Option(None, "--save-output", help="Save agent answer to file."),
+    sandbox_script: Path | None = typer.Option(
+        None, "--sandbox-script", help="Optional python script to run in sandbox."
+    ),
+    save_context: Path | None = typer.Option(
+        None, "--save-context", help="Save assembled agent context as JSON before LLM call."
+    ),
+    save_output: Path | None = typer.Option(
+        None, "--save-output", help="Save agent answer to file."
+    ),
 ) -> None:
     """Run LLM-backed security agent with memory and optional sandbox tool."""
     from guardian.agents.adk import AgentError, AgentMemory, SecurityAgent
@@ -1431,9 +1513,9 @@ def agent_run(
     if not prompt or not prompt.strip():
         console.print(
             f"[{WARN}]Missing prompt.[/{WARN}] Example usage:\n"
-            "  vyper-guard agent \"Summarize critical risks\" --file contract.vy\n"
-            "  vyper-guard agent \"Review upgrade safety\" --address 0xA0b8...6eb48\n"
-            "  vyper-guard agent \"Prioritize fixes\" --file contract.vy --save-output agent.txt"
+            '  vyper-guard agent "Summarize critical risks" --file contract.vy\n'
+            '  vyper-guard agent "Review upgrade safety" --address 0xA0b8...6eb48\n'
+            '  vyper-guard agent "Prioritize fixes" --file contract.vy --save-output agent.txt'
         )
         raise typer.Exit(code=2)
 
@@ -1501,7 +1583,9 @@ def agent_run(
 
     if save_context:
         save_context.parent.mkdir(parents=True, exist_ok=True)
-        save_context.write_text(_json.dumps(context, indent=2, ensure_ascii=False), encoding="utf-8")
+        save_context.write_text(
+            _json.dumps(context, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     try:
         answer = SecurityAgent(
@@ -1624,7 +1708,9 @@ def benchmark(
         ("min_detector_f1", min_detector_f1),
     ):
         if gate_value is not None and not (0.0 <= gate_value <= 1.0):
-            console.print(f"[{ERR}]Invalid {gate_name}: {gate_value}. Must be between 0.0 and 1.0.[/{ERR}]")
+            console.print(
+                f"[{ERR}]Invalid {gate_name}: {gate_value}. Must be between 0.0 and 1.0.[/{ERR}]"
+            )
             raise typer.Exit(code=2)
 
     if min_detector_support < 1:
@@ -2091,10 +2177,14 @@ def _run_fix_mode(
 
     max_rank = _RISK_TIER_ORDER.get(max_auto_fix_tier, _RISK_TIER_ORDER["C"])
     eligible_findings = [
-        f for f in report.findings if _RISK_TIER_ORDER.get(risk_tier_for_detector(f.detector_name), 99) <= max_rank
+        f
+        for f in report.findings
+        if _RISK_TIER_ORDER.get(risk_tier_for_detector(f.detector_name), 99) <= max_rank
     ]
     skipped_by_tier = [
-        f for f in report.findings if _RISK_TIER_ORDER.get(risk_tier_for_detector(f.detector_name), 99) > max_rank
+        f
+        for f in report.findings
+        if _RISK_TIER_ORDER.get(risk_tier_for_detector(f.detector_name), 99) > max_rank
     ]
 
     plan = remediation_planning_contract(report.findings, max_auto_fix_tier=max_auto_fix_tier)
@@ -2138,17 +2228,14 @@ def _run_fix_mode(
             )
             for s in skipped_by_tier:
                 tier = risk_tier_for_detector(s.detector_name)
-                con.print(
-                    f"    [{DIM}]• {s.detector_name}: tier {tier}"
-                    f" ({s.title})[/{DIM}]"
-                )
+                con.print(f"    [{DIM}]• {s.detector_name}: tier {tier} ({s.title})[/{DIM}]")
             con.print()
         if skipped:
-            con.print(f"  [{WARN}]Manual remediation required for {len(skipped)} finding(s):[/{WARN}]")
+            con.print(
+                f"  [{WARN}]Manual remediation required for {len(skipped)} finding(s):[/{WARN}]"
+            )
             for s in skipped:
-                con.print(
-                    f"    [{DIM}]• {s.finding.detector_name}: {s.description}[/{DIM}]"
-                )
+                con.print(f"    [{DIM}]• {s.finding.detector_name}: {s.description}[/{DIM}]")
             con.print()
         con.print(
             f"\n  [{WARN}]⚠  No auto-fixes available within risk tier ≤ {max_auto_fix_tier}.[/{WARN}]\n"
@@ -2255,10 +2342,7 @@ def _run_fix_mode(
         )
         for s in skipped_by_tier:
             tier = risk_tier_for_detector(s.detector_name)
-            con.print(
-                f"    [{DIM}]• {s.detector_name}: tier {tier}"
-                f" ({s.title})[/{DIM}]"
-            )
+            con.print(f"    [{DIM}]• {s.detector_name}: tier {tier} ({s.title})[/{DIM}]")
         con.print()
 
     # Build patched source once so we can provide post-fix analysis clarity
@@ -2276,11 +2360,7 @@ def _run_fix_mode(
         before_by_detector = Counter(f.detector_name for f in report.findings)
         after_by_detector = Counter(f.detector_name for f in post_report.findings)
 
-        still_open = {
-            det: count
-            for det, count in after_by_detector.items()
-            if count > 0
-        }
+        still_open = {det: count for det, count in after_by_detector.items() if count > 0}
 
         post_fix_payload = {
             "before_findings": before_total,
@@ -2291,14 +2371,20 @@ def _run_fix_mode(
             "after_by_detector": dict(after_by_detector),
         }
 
-        title_style = OK if after_total < before_total else WARN if after_total == before_total else ERR
+        title_style = (
+            OK if after_total < before_total else WARN if after_total == before_total else ERR
+        )
         con.print(
             Panel(
                 f"[bold]Post-fix verification[/bold]\n"
                 f"Before findings: [bold]{before_total}[/bold]\n"
                 f"After findings: [bold]{after_total}[/bold]\n"
                 f"Delta: [bold]{before_total - after_total:+d}[/bold]",
-                border_style="green" if after_total < before_total else "yellow" if after_total == before_total else "red",
+                border_style="green"
+                if after_total < before_total
+                else "yellow"
+                if after_total == before_total
+                else "red",
                 title=f"[{title_style}]Verification Summary[/{title_style}]",
                 expand=False,
             )
@@ -2406,8 +2492,18 @@ def detectors_cmd() -> None:
     console.print(
         Columns(
             [
-                Panel(sev_table, title="[bold]By Severity[/bold]", border_style=ACCENT, box=box.ROUNDED),
-                Panel(cat_table, title="[bold]By Category[/bold]", border_style=ACCENT, box=box.ROUNDED),
+                Panel(
+                    sev_table,
+                    title="[bold]By Severity[/bold]",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                ),
+                Panel(
+                    cat_table,
+                    title="[bold]By Category[/bold]",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                ),
             ],
             equal=True,
             expand=True,
@@ -2501,21 +2597,31 @@ def _write_stats_graph_artifacts(
     event_per_fn = (events / functions) if functions else 0.0
     complexity_index = min(
         100.0,
-        (functions * 2.2) + (state_vars * 1.4) + (imports * 6.0) + (events * 0.8) + (avg_fn_len * 0.9),
+        (functions * 2.2)
+        + (state_vars * 1.4)
+        + (imports * 6.0)
+        + (events * 0.8)
+        + (avg_fn_len * 0.9),
     )
     complexity_band = (
-        "Low"
-        if complexity_index < 35
-        else "Moderate"
-        if complexity_index < 65
-        else "High"
+        "Low" if complexity_index < 35 else "Moderate" if complexity_index < 65 else "High"
     )
 
     file_label = str(payload.get("file", "contract.vy"))
-    control_flow = payload.get("control_flow", {}) if isinstance(payload.get("control_flow"), dict) else {}
-    call_activity = payload.get("call_activity", {}) if isinstance(payload.get("call_activity"), dict) else {}
-    call_edges = payload.get("call_edges", []) if isinstance(payload.get("call_edges"), list) else []
-    functions_detailed = payload.get("functions_detailed", []) if isinstance(payload.get("functions_detailed"), list) else []
+    control_flow = (
+        payload.get("control_flow", {}) if isinstance(payload.get("control_flow"), dict) else {}
+    )
+    call_activity = (
+        payload.get("call_activity", {}) if isinstance(payload.get("call_activity"), dict) else {}
+    )
+    call_edges = (
+        payload.get("call_edges", []) if isinstance(payload.get("call_edges"), list) else []
+    )
+    functions_detailed = (
+        payload.get("functions_detailed", [])
+        if isinstance(payload.get("functions_detailed"), list)
+        else []
+    )
 
     def _clamp_pct(value: float) -> float:
         return max(0.0, min(100.0, value))
@@ -2556,7 +2662,7 @@ def _write_stats_graph_artifacts(
         + '<circle cx="180" cy="180" r="80" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />'
         + f'<text x="180" y="175" text-anchor="middle" fill="#3f2a80" font-size="42" font-weight="700">{total_lines}</text>'
         + '<text x="180" y="198" text-anchor="middle" fill="#6b7280" font-size="13">total lines</text>'
-        + '</svg>'
+        + "</svg>"
     )
 
     structure_labels = ["Functions", "State Vars", "Events", "Imports"]
@@ -2568,18 +2674,26 @@ def _write_stats_graph_artifacts(
     ]
     for i in range(5):
         y = 24 + i * 50
-        structure_parts.append(f'<line x1="54" y1="{y}" x2="534" y2="{y}" stroke="#eceff3" stroke-width="1" />')
+        structure_parts.append(
+            f'<line x1="54" y1="{y}" x2="534" y2="{y}" stroke="#eceff3" stroke-width="1" />'
+        )
     slot_w = 480 / max(1, len(structure_values))
     bar_w = 56
     for idx, (label, value) in enumerate(zip(structure_labels, structure_values, strict=True)):
         h = (value / structure_max) * 200 if structure_max else 0
         x = 54 + idx * slot_w + ((slot_w - bar_w) / 2)
         y = 224 - h
-        structure_parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w}" height="{h:.1f}" fill="#7f56d9" rx="6" />')
-        structure_parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>')
-        structure_parts.append(f'<text x="{x + bar_w / 2:.1f}" y="256" text-anchor="middle" fill="#4b5563" font-size="12">{_html.escape(label)}</text>')
-    structure_parts.append('</svg>')
-    structure_svg = ''.join(structure_parts)
+        structure_parts.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w}" height="{h:.1f}" fill="#7f56d9" rx="6" />'
+        )
+        structure_parts.append(
+            f'<text x="{x + bar_w / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>'
+        )
+        structure_parts.append(
+            f'<text x="{x + bar_w / 2:.1f}" y="256" text-anchor="middle" fill="#4b5563" font-size="12">{_html.escape(label)}</text>'
+        )
+    structure_parts.append("</svg>")
+    structure_svg = "".join(structure_parts)
 
     fn_items: list[tuple[str, int]] = []
     if isinstance(functions_payload, list):
@@ -2603,13 +2717,21 @@ def _write_stats_graph_artifacts(
         y = 24 + idx * 28
         w = (value / fn_max) * 430 if fn_max else 0
         fn_parts.append(f'<rect x="170" y="{y}" width="430" height="18" fill="#eef0f4" rx="4" />')
-        fn_parts.append(f'<rect x="170" y="{y}" width="{w:.1f}" height="18" fill="#a78bfa" rx="4" />')
-        fn_parts.append(f'<text x="162" y="{y + 13}" text-anchor="end" fill="#4b5563" font-size="12">{_html.escape(name)}</text>')
-        fn_parts.append(f'<text x="{170 + w + 8:.1f}" y="{y + 13}" fill="#3f2a80" font-size="12" font-weight="700">{value} lines</text>')
-    fn_parts.append('</svg>')
-    fn_svg = ''.join(fn_parts)
+        fn_parts.append(
+            f'<rect x="170" y="{y}" width="{w:.1f}" height="18" fill="#a78bfa" rx="4" />'
+        )
+        fn_parts.append(
+            f'<text x="162" y="{y + 13}" text-anchor="end" fill="#4b5563" font-size="12">{_html.escape(name)}</text>'
+        )
+        fn_parts.append(
+            f'<text x="{170 + w + 8:.1f}" y="{y + 13}" fill="#3f2a80" font-size="12" font-weight="700">{value} lines</text>'
+        )
+    fn_parts.append("</svg>")
+    fn_svg = "".join(fn_parts)
 
-    gauge_color = "#22c55e" if complexity_index < 35 else "#f59e0b" if complexity_index < 65 else "#ef4444"
+    gauge_color = (
+        "#22c55e" if complexity_index < 35 else "#f59e0b" if complexity_index < 65 else "#ef4444"
+    )
     gauge_r = 82.0
     gauge_c = 2 * math.pi * gauge_r
     gauge_progress = gauge_c * (_clamp_pct(complexity_index) / 100.0)
@@ -2620,7 +2742,7 @@ def _write_stats_graph_artifacts(
         + f'<circle cx="110" cy="110" r="82" fill="none" stroke="{gauge_color}" stroke-width="18" stroke-dasharray="{gauge_progress:.2f} {gauge_c:.2f}" transform="rotate(-90 110 110)" />'
         + f'<text x="110" y="112" text-anchor="middle" fill="#3f2a80" font-size="34" font-weight="800">{complexity_index:.1f}</text>'
         + f'<text x="110" y="134" text-anchor="middle" fill="#6b7280" font-size="12">{_html.escape(complexity_band)} complexity</text>'
-        + '</svg>'
+        + "</svg>"
     )
 
     flow_labels = [
@@ -2650,17 +2772,25 @@ def _write_stats_graph_artifacts(
     width = 52
     for i in range(5):
         y = 24 + i * 44
-        flow_svg_parts.append(f'<line x1="72" y1="{y}" x2="690" y2="{y}" stroke="#eceff3" stroke-width="1" />')
+        flow_svg_parts.append(
+            f'<line x1="72" y1="{y}" x2="690" y2="{y}" stroke="#eceff3" stroke-width="1" />'
+        )
     for idx, (label, value) in enumerate(zip(flow_labels, flow_values, strict=True)):
         h = (value / flow_max) * 170 if flow_max else 0
         x = 72 + idx * slot + (slot - width) / 2
         y = 200 - h
         color = "#7f56d9" if idx < 3 else "#6d28d9"
-        flow_svg_parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{width}" height="{h:.1f}" fill="{color}" rx="5" />')
-        flow_svg_parts.append(f'<text x="{x + width / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>')
-        flow_svg_parts.append(f'<text x="{x + width / 2:.1f}" y="234" text-anchor="middle" fill="#4b5563" font-size="10">{_html.escape(label)}</text>')
-    flow_svg_parts.append('</svg>')
-    flow_svg = ''.join(flow_svg_parts)
+        flow_svg_parts.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{width}" height="{h:.1f}" fill="{color}" rx="5" />'
+        )
+        flow_svg_parts.append(
+            f'<text x="{x + width / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>'
+        )
+        flow_svg_parts.append(
+            f'<text x="{x + width / 2:.1f}" y="234" text-anchor="middle" fill="#4b5563" font-size="10">{_html.escape(label)}</text>'
+        )
+    flow_svg_parts.append("</svg>")
+    flow_svg = "".join(flow_svg_parts)
 
     edges: list[tuple[str, str]] = []
     for edge in call_edges:
@@ -2788,7 +2918,7 @@ def _write_stats_graph_artifacts(
 
     graph_parts: list[str] = [
         f'<svg viewBox="0 0 {total_w:.0f} {graph_h:.0f}" aria-label="Function control flow and interaction block diagram">',
-        '<defs>'
+        "<defs>"
         '<marker id="arrow-int-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">'
         '<path d="M 0 0 L 10 5 L 0 10 z" fill="#7f56d9"/></marker>'
         '<marker id="arrow-int-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">'
@@ -2805,7 +2935,7 @@ def _write_stats_graph_artifacts(
         '<path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/></marker>'
         '<marker id="arrow-write" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">'
         '<path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316"/></marker>'
-        '</defs>',
+        "</defs>",
         f'<rect x="0" y="0" width="{total_w:.0f}" height="{graph_h:.0f}" fill="#ffffff" />',
         '<text x="24" y="26" fill="#4b5563" font-size="12">solid: internal control flow (multi-color by path)</text>',
         '<text x="390" y="26" fill="#6b7280" font-size="12">dashed: external/state interactions</text>',
@@ -2819,7 +2949,9 @@ def _write_stats_graph_artifacts(
 
     for col_index, _d in enumerate(depth_keys):
         col_x = left_margin + col_index * (node_w + col_gap)
-        graph_parts.append(f'<text x="{col_x}" y="44" fill="#6b7280" font-size="11" font-weight="600">L{col_index} flow stage</text>')
+        graph_parts.append(
+            f'<text x="{col_x}" y="44" fill="#6b7280" font-size="11" font-weight="600">L{col_index} flow stage</text>'
+        )
 
     connector_parts: list[str] = []
     node_parts: list[str] = []
@@ -2847,15 +2979,19 @@ def _write_stats_graph_artifacts(
             fill = "#f8fafc"
             stroke = "#d1d5db"
 
-        node_parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="{fill}" stroke="{stroke}" />')
-        node_parts.append(f'<text x="{x + 12}" y="{y + 22}" fill="#3f2a80" font-size="13" font-weight="700">{_html.escape(name)}</text>')
+        node_parts.append(
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="{fill}" stroke="{stroke}" />'
+        )
+        node_parts.append(
+            f'<text x="{x + 12}" y="{y + 22}" fill="#3f2a80" font-size="13" font-weight="700">{_html.escape(name)}</text>'
+        )
         node_parts.append(
             f'<text x="{x + 12}" y="{y + 42}" fill="#4b5563" font-size="11">'
-            f'int:{int_count} ext:{ext} cf:{branches}/{loops}/{asserts}</text>'
+            f"int:{int_count} ext:{ext} cf:{branches}/{loops}/{asserts}</text>"
         )
         node_parts.append(
             f'<text x="{x + 12}" y="{y + 60}" fill="#6b7280" font-size="11">'
-            f'r:{_html.escape(_var_preview(reads))}  w:{_html.escape(_var_preview(writes))}</text>'
+            f"r:{_html.escape(_var_preview(reads))}  w:{_html.escape(_var_preview(writes))}</text>"
         )
 
         if ext > 0:
@@ -2863,7 +2999,7 @@ def _write_stats_graph_artifacts(
             sy = y + 24
             tx = external_box[0]
             ty = external_box[1] + 22 + (idx % 4) * 10
-            path = f'M {sx:.1f} {sy:.1f} C {sx + 32:.1f} {sy:.1f}, {tx - 26:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}'
+            path = f"M {sx:.1f} {sy:.1f} C {sx + 32:.1f} {sy:.1f}, {tx - 26:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}"
             connector_parts.append(
                 f'<path d="{path}" fill="none" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrow-ext)" opacity="0.85" />'
             )
@@ -2873,7 +3009,7 @@ def _write_stats_graph_artifacts(
             sy = storage_box[1] + 20 + (idx % 4) * 10
             tx = x + w
             ty = y + 46
-            path = f'M {sx:.1f} {sy:.1f} C {sx - 24:.1f} {sy:.1f}, {tx + 20:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}'
+            path = f"M {sx:.1f} {sy:.1f} C {sx - 24:.1f} {sy:.1f}, {tx + 20:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}"
             connector_parts.append(
                 f'<path d="{path}" fill="none" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="2 3" marker-end="url(#arrow-read)" opacity="0.85" />'
             )
@@ -2883,7 +3019,7 @@ def _write_stats_graph_artifacts(
             sy = y + 60
             tx = storage_box[0]
             ty = storage_box[1] + 34 + (idx % 4) * 8
-            path = f'M {sx:.1f} {sy:.1f} C {sx + 22:.1f} {sy:.1f}, {tx - 22:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}'
+            path = f"M {sx:.1f} {sy:.1f} C {sx + 22:.1f} {sy:.1f}, {tx - 22:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}"
             connector_parts.append(
                 f'<path d="{path}" fill="none" stroke="#f97316" stroke-width="1.3" stroke-dasharray="3 3" marker-end="url(#arrow-write)" opacity="0.85" />'
             )
@@ -2918,13 +3054,13 @@ def _write_stats_graph_artifacts(
         if forward:
             color, marker = internal_palette[edge_idx % len(internal_palette)]
             mid_x = (sx + tx) / 2
-            path = f'M {sx:.1f} {sy:.1f} C {mid_x:.1f} {sy:.1f}, {mid_x:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}'
+            path = f"M {sx:.1f} {sy:.1f} C {mid_x:.1f} {sy:.1f}, {mid_x:.1f} {ty:.1f}, {tx:.1f} {ty:.1f}"
             connector_parts.append(
                 f'<path d="{path}" fill="none" stroke="{color}" stroke-width="1.7" marker-end="{marker}" opacity="0.88" />'
             )
         else:
             bend = 36.0
-            path = f'M {sx:.1f} {sy:.1f} C {sx + bend:.1f} {sy - bend:.1f}, {tx - bend:.1f} {ty - bend:.1f}, {tx:.1f} {ty:.1f}'
+            path = f"M {sx:.1f} {sy:.1f} C {sx + bend:.1f} {sy - bend:.1f}, {tx - bend:.1f} {ty - bend:.1f}, {tx:.1f} {ty:.1f}"
             connector_parts.append(
                 f'<path d="{path}" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrow-int-red)" opacity="0.85" />'
             )
@@ -2934,10 +3070,12 @@ def _write_stats_graph_artifacts(
     graph_parts.extend(node_parts)
 
     if not edges:
-        graph_parts.append('<text x="24" y="270" fill="#6b7280" font-size="13">No internal function-to-function call edges detected.</text>')
+        graph_parts.append(
+            '<text x="24" y="270" fill="#6b7280" font-size="13">No internal function-to-function call edges detected.</text>'
+        )
 
-    graph_parts.append('</svg>')
-    call_graph_svg = ''.join(graph_parts)
+    graph_parts.append("</svg>")
+    call_graph_svg = "".join(graph_parts)
 
     detail_rows = []
     for item in functions_detailed[:80]:
@@ -2959,8 +3097,10 @@ def _write_stats_graph_artifacts(
             f'<td class="val">{branches}/{loops}/{asserts}</td><td class="val">{reads_count}/{writes_count}</td></tr>'
         )
     if not detail_rows:
-        detail_rows.append('<tr><td colspan="5">No function-level behavioral data available.</td></tr>')
-    function_behavior_html = ''.join(detail_rows)
+        detail_rows.append(
+            '<tr><td colspan="5">No function-level behavioral data available.</td></tr>'
+        )
+    function_behavior_html = "".join(detail_rows)
 
     kpi_cards = [
         ("Total Lines", total_lines),
@@ -2972,24 +3112,24 @@ def _write_stats_graph_artifacts(
         ("Events", events),
         ("Imports", imports),
     ]
-    kpi_html = ''.join(
+    kpi_html = "".join(
         '<div class="kpi">'
         + f'<div class="label">{_html.escape(label)}</div>'
         + f'<div class="value">{value}</div>'
-        + '</div>'
+        + "</div>"
         for label, value in kpi_cards
     )
 
-    legend_html = ''.join(
+    legend_html = "".join(
         '<div class="row">'
         + f'<span class="dot" style="background:{color}"></span>'
-        + f'<span>{_html.escape(label)}</span>'
-        + f'<strong>{pct:.1f}%</strong>'
-        + '</div>'
+        + f"<span>{_html.escape(label)}</span>"
+        + f"<strong>{pct:.1f}%</strong>"
+        + "</div>"
         for label, pct, color in line_segments
     )
 
-    insights_html = ''.join(
+    insights_html = "".join(
         [
             f'<tr><td>Avg Function Length</td><td class="val">{avg_fn_len:.1f} lines</td><td>Longer functions can increase audit complexity.</td></tr>',
             f'<tr><td>State Variables per Function</td><td class="val">{state_per_fn:.2f}</td><td>Higher ratios indicate state-heavy behavior.</td></tr>',
@@ -3404,7 +3544,9 @@ def stats(
         if func.end_line >= func.start_line
     ]
     avg_fn_len = (sum(fn_lengths) / len(fn_lengths)) if fn_lengths else 0.0
-    state_per_fn = (len(contract.state_variables) / len(contract.functions)) if contract.functions else 0.0
+    state_per_fn = (
+        (len(contract.state_variables) / len(contract.functions)) if contract.functions else 0.0
+    )
     event_per_fn = (len(contract.events) / len(contract.functions)) if contract.functions else 0.0
     complexity_index = min(
         100.0,
@@ -3414,7 +3556,9 @@ def stats(
         + (len(contract.events) * 0.8)
         + (avg_fn_len * 0.9),
     )
-    complexity_band = "Low" if complexity_index < 35 else "Moderate" if complexity_index < 65 else "High"
+    complexity_band = (
+        "Low" if complexity_index < 35 else "Moderate" if complexity_index < 65 else "High"
+    )
 
     insight_table = Table(
         title="[bold]🧠 Analytical Insights[/bold]",
@@ -3426,10 +3570,24 @@ def stats(
     insight_table.add_column("Metric", style=f"bold {ACCENT}", min_width=24)
     insight_table.add_column("Value", style="bold white", width=22)
     insight_table.add_column("Interpretation")
-    insight_table.add_row("Avg Function Length", f"{avg_fn_len:.1f} lines", "Longer functions can increase audit complexity.")
-    insight_table.add_row("State Variables / Function", f"{state_per_fn:.2f}", "Higher ratio indicates state-heavy behavior.")
-    insight_table.add_row("Events / Function", f"{event_per_fn:.2f}", "Lower ratio can reduce on-chain observability.")
-    insight_table.add_row("Complexity Index", f"{complexity_index:.1f} / 100 ({complexity_band})", "Composite heuristic from size, state, and function profile.")
+    insight_table.add_row(
+        "Avg Function Length",
+        f"{avg_fn_len:.1f} lines",
+        "Longer functions can increase audit complexity.",
+    )
+    insight_table.add_row(
+        "State Variables / Function",
+        f"{state_per_fn:.2f}",
+        "Higher ratio indicates state-heavy behavior.",
+    )
+    insight_table.add_row(
+        "Events / Function", f"{event_per_fn:.2f}", "Lower ratio can reduce on-chain observability."
+    )
+    insight_table.add_row(
+        "Complexity Index",
+        f"{complexity_index:.1f} / 100 ({complexity_band})",
+        "Composite heuristic from size, state, and function profile.",
+    )
     console.print(insight_table)
     console.print()
 

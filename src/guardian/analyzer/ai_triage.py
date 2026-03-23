@@ -82,7 +82,9 @@ def _policy_warnings(status: str, announced: bool, sunset_after: str | None) -> 
         if sunset_after:
             warnings.append(f"AI triage policy deprecation announced; sunset after {sunset_after}.")
         else:
-            warnings.append("AI triage policy deprecation announced; sunset date not yet published.")
+            warnings.append(
+                "AI triage policy deprecation announced; sunset date not yet published."
+            )
     return warnings
 
 

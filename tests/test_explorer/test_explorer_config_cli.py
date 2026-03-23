@@ -19,7 +19,9 @@ def test_explorer_config_set_and_show_roundtrip(monkeypatch) -> None:
 
         set_provider = runner.invoke(app, ["explorer", "config", "set", "provider", "auto"])
         set_network = runner.invoke(app, ["explorer", "config", "set", "network", "sepolia"])
-        set_key = runner.invoke(app, ["explorer", "config", "set", "api-key", "exp-test-key-123456"])
+        set_key = runner.invoke(
+            app, ["explorer", "config", "set", "api-key", "exp-test-key-123456"]
+        )
 
         assert set_provider.exit_code == 0
         assert set_network.exit_code == 0

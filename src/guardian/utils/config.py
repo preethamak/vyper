@@ -172,12 +172,15 @@ def load_config(
         raw.setdefault("ai_triage", {})["policy_status"] = env_ai_status
 
     if env_ai_dep_ann := os.getenv("GUARDIAN_AI_TRIAGE_DEPRECATION_ANNOUNCED"):
-        raw.setdefault("ai_triage", {})["deprecation_announced"] = env_ai_dep_ann.strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        raw.setdefault("ai_triage", {})["deprecation_announced"] = (
+            env_ai_dep_ann.strip().lower()
+            in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        )
 
     if env_ai_dep_sunset := os.getenv("GUARDIAN_AI_TRIAGE_DEPRECATION_SUNSET_AFTER"):
         raw.setdefault("ai_triage", {})["deprecation_sunset_after"] = env_ai_dep_sunset

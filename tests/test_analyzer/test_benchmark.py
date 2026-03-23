@@ -53,9 +53,7 @@ def test_benchmark_json_output_shape() -> None:
         assert "unsafe_raw_call" in payload["by_detector"]
 
         detector_metrics = payload["by_detector"]["unsafe_raw_call"]
-        assert {"tp", "fp", "fn", "support", "precision", "recall", "f1"}.issubset(
-            detector_metrics
-        )
+        assert {"tp", "fp", "fn", "support", "precision", "recall", "f1"}.issubset(detector_metrics)
 
 
 def test_benchmark_uses_external_labels_file_when_provided() -> None:

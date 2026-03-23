@@ -611,7 +611,9 @@ def remediation_tier_rules() -> dict[str, dict[str, object]]:
     return {tier: dict(rule) for tier, rule in _TIER_RULES.items()}
 
 
-def remediation_planning_contract(findings: list[DetectorResult], max_auto_fix_tier: str) -> dict[str, object]:
+def remediation_planning_contract(
+    findings: list[DetectorResult], max_auto_fix_tier: str
+) -> dict[str, object]:
     """Return a deterministic planning contract for fix eligibility by tier.
 
     The contract is intentionally simple so CLI/CI/reporting surfaces can
@@ -658,13 +660,17 @@ def validate_fix_results_by_tier(results: list[FixResult]) -> list[str]:
 
         if tier == "C":
             payload = f"{r.description}\n{r.diff}".lower()
-            if not any(token in payload for token in ("fixme", "manual", "review", "note", "refactor")):
+            if not any(
+                token in payload for token in ("fixme", "manual", "review", "note", "refactor")
+            ):
                 errors.append(
                     f"{r.finding.detector_name}: tier C applied fix must remain advisory/manual"
                 )
 
         if tier == "A" and "fixme" in r.diff.lower():
-            errors.append(f"{r.finding.detector_name}: tier A fix should not add advisory FIXME comments")
+            errors.append(
+                f"{r.finding.detector_name}: tier A fix should not add advisory FIXME comments"
+            )
 
     return errors
 

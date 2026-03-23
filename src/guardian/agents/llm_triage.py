@@ -107,7 +107,9 @@ def _extract_json_payload(content: str) -> dict[str, Any]:
     return data
 
 
-def _normalize_items(data: dict[str, Any], report: AnalysisReport, max_items: int) -> list[dict[str, Any]]:
+def _normalize_items(
+    data: dict[str, Any], report: AnalysisReport, max_items: int
+) -> list[dict[str, Any]]:
     raw_items = data.get("items", [])
     if not isinstance(raw_items, list):
         raise LLMTriageError("LLM triage payload must contain list field 'items'")
@@ -147,7 +149,9 @@ def _normalize_items(data: dict[str, Any], report: AnalysisReport, max_items: in
                     "evidence_count": len(finding.evidence),
                     "final_confidence": confidence,
                 },
-                "suggested_next_step": str(item.get("suggested_next_step", "Review finding and patch urgently.")),
+                "suggested_next_step": str(
+                    item.get("suggested_next_step", "Review finding and patch urgently.")
+                ),
                 "reasoning": str(item.get("reasoning", "")),
                 "evidence_refs": finding.evidence,
                 "provenance": {

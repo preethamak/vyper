@@ -60,13 +60,17 @@ def test_detector_docs_scoring_matches_runtime_model() -> None:
 
     points = {
         sev: int(val)
-        for sev, val in re.findall(r"\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO)\s*\|\s*(-?\d+)\s*\|", text)
+        for sev, val in re.findall(
+            r"\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO)\s*\|\s*(-?\d+)\s*\|", text
+        )
     }
     assert points == {sev.value: -sev.score_penalty for sev in Severity}
 
     caps = {
         sev: int(val)
-        for sev, val in re.findall(r"-\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO) max deduction:\s*(\d+)", text)
+        for sev, val in re.findall(
+            r"-\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO) max deduction:\s*(\d+)", text
+        )
     }
     assert caps == {sev.value: _TIER_CAPS[sev] for sev in Severity}
 
