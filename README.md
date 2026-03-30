@@ -6,8 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/vyper-guard)](https://pypi.org/project/vyper-guard/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/vyper-guard?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/vyper-guard)
+[![PyPI](https://img.shields.io/pypi/v/vyper-guard)](https://pypi.org/project/vyper-guard/)[![PyPI Downloads](https://static.pepy.tech/personalized-badge/vyper-guard?period=total&units=INTERNATIONAL_SYSTEM&left_color=ORANGE&right_color=BLUE&left_text=downloads)](https://pepy.tech/projects/vyper-guard)
 
 Scan `.vy` files for vulnerabilities and get instant feedback from your terminal.
 
