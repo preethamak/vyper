@@ -5,7 +5,7 @@
 ```bash
 # Clone the repository
 git clone https://github.com/preethamak/vyper.git
-cd vyper-guard
+cd vyper
 
 # Install with uv (fastest)
 uv sync
@@ -17,6 +17,10 @@ vyper-guard --version
 ## Install with pip
 
 ```bash
+# From PyPI
+pip install vyper-guard
+
+# From local source checkout
 pip install -e .
 ```
 
@@ -48,7 +52,7 @@ docker run --rm -v $(pwd):/code vyper-guard analyze /code/vault.vy --fix
 ```bash
 # Clone and install in dev mode
 git clone https://github.com/preethamak/vyper.git
-cd vyper-guard
+cd vyper
 uv sync --dev
 
 # Run tests
@@ -110,7 +114,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv pip install vyper-guard
-      - run: vyper-guard analyze contracts/*.vy --ci --severity-threshold HIGH
+      - run: |
+          find contracts -name '*.vy' -print0 | \
+          xargs -0 -I{} vyper-guard analyze "{}" --ci --severity-threshold HIGH
 ```
 
 ### Pre-commit Hook

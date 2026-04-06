@@ -85,6 +85,38 @@ def execute(target: address, data: Bytes[1024]):
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
 
+    def test_negated_sender_assert_does_not_count_as_access_control(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+def withdraw(amount: uint256):
+    assert msg.sender != self.owner
+    raw_call(msg.sender, b"", value=amount)
+    self.owner = msg.sender
+"""
+        results = _run_detector(MissingNonreentrantDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.CRITICAL
+
+    def test_interface_call_without_nonreentrant_is_detected(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IERC20:
+    def transfer(to: address, amount: uint256) -> bool: nonpayable
+
+token: public(address)
+
+@external
+def payout(to: address, amount: uint256):
+    IERC20(self.token).transfer(to, amount)
+"""
+        results = _run_detector(MissingNonreentrantDetector, source)
+        assert len(results) == 1
+
 
 # -------------------------------------------------------------------------
 # UnsafeRawCallDetector
@@ -195,6 +227,17 @@ def update():
 """
         results = _run_detector(TimestampDependenceDetector, source)
         assert len(results) == 0
+
+    def test_large_unrelated_number_does_not_suppress_timestamp_finding(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def check(v: uint256):
+    assert block.timestamp > v and 999999 > 1
+"""
+        results = _run_detector(TimestampDependenceDetector, source)
+        assert len(results) == 1
 
 
 # -------------------------------------------------------------------------
@@ -413,6 +456,29 @@ class TestStaticAnalyzerEndToEnd:
         for f in report.findings:
             assert f.severity in (Severity.CRITICAL, Severity.HIGH)
 
+    def test_detector_crash_is_reported_explicitly(self) -> None:
+        class _BrokenDetector:
+            NAME = "broken_detector"
+
+            def detect(self, contract):
+                raise RuntimeError("boom")
+
+        analyzer = StaticAnalyzer(enabled_detectors=[])
+        analyzer._detectors = [_BrokenDetector]  # type: ignore[assignment]
+
+        source = "# pragma version ^0.4.0\nowner: public(address)\n"
+        report = analyzer.analyze_source(source, "broken.vy")
+
+        assert "broken_detector" in report.failed_detectors
+        assert "broken_detector" in report.detector_errors
+        crash_findings = [
+            f for f in report.findings if f.detector_name == "detector_runtime_failure"
+        ]
+        assert len(crash_findings) == 1
+        assert crash_findings[0].severity == Severity.CRITICAL
+        # Detector failures should additionally degrade score trust.
+        assert report.security_score <= 50
+
 
 # -------------------------------------------------------------------------
 # Constructor / __init__ / @deploy exclusion tests
@@ -543,6 +609,24 @@ def fast(a: uint256) -> uint256:
         results = check_compiler_version(contract)
         assert len(results) >= 1
         assert "# @version ^0.3.9" in results[0].source_snippet
+
+    def test_compiler_check_flags_historical_lock_regression_versions(self) -> None:
+        source = """\
+# @version 0.2.15
+"""
+        contract = parse_vyper_source(source, "<test>")
+        results = check_compiler_version(contract)
+        assert any("historical lock regression" in r.title.lower() for r in results)
+
+    def test_compiler_check_uses_real_pragma_not_unrelated_comment(self) -> None:
+        source = """\
+# random note mentioning 0.3.9 but not a pragma
+# @version ^0.3.9
+"""
+        contract = parse_vyper_source(source, "<test>")
+        results = check_compiler_version(contract)
+        assert len(results) >= 1
+        assert results[0].source_snippet == "# @version ^0.3.9"
 
 
 # -------------------------------------------------------------------------
@@ -779,6 +863,24 @@ def distribute():
         results = _run_detector(SendInLoopDetector, source)
         assert len(results) == 1
 
+    def test_flags_interface_call_in_loop(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IERC20:
+    def transfer(to: address, amount: uint256) -> bool: nonpayable
+
+users: DynArray[address, 50]
+token: public(address)
+
+@external
+def distribute(amount: uint256):
+    for user: address in self.users:
+        IERC20(self.token).transfer(user, amount)
+"""
+        results = _run_detector(SendInLoopDetector, source)
+        assert len(results) == 1
+
 
 # -------------------------------------------------------------------------
 # UncheckedSubtractionDetector
@@ -834,6 +936,22 @@ def complex(_amount: uint256):
         # Only self.counter -= _amount is unchecked
         assert len(results) == 1
         assert "counter" in results[0].title
+
+    def test_related_mapping_guard_does_not_hide_total_balance_subtraction(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+total_balance: uint256
+user_balance: HashMap[address, uint256]
+
+@external
+def withdraw(amount: uint256):
+    assert self.user_balance[msg.sender] >= amount
+    self.total_balance -= amount
+"""
+        results = _run_detector(UncheckedSubtractionDetector, source)
+        assert len(results) == 1
+        assert "total_balance" in results[0].title
 
 
 # -------------------------------------------------------------------------
@@ -904,8 +1022,40 @@ def mixed(amount: uint256):
     self.balances[msg.sender] = 0
 """
         results = _run_detector(CEIViolationDetector, source)
-        assert len(results) == 1
+        assert len(results) == 2
         assert results[0].severity == Severity.HIGH
+
+    def test_flags_interface_call_before_state_update(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IERC20:
+    def transfer(to: address, amount: uint256) -> bool: nonpayable
+
+token: public(address)
+balances: HashMap[address, uint256]
+
+@external
+def withdraw(amount: uint256):
+    IERC20(self.token).transfer(msg.sender, amount)
+    self.balances[msg.sender] -= amount
+"""
+        results = _run_detector(CEIViolationDetector, source)
+        assert len(results) == 1
+
+    def test_flags_call_before_dynarray_append_state_mutation(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+items: DynArray[uint256, 100]
+
+@external
+def collect(v: uint256):
+    send(msg.sender, 0)
+    self.items.append(v)
+"""
+        results = _run_detector(CEIViolationDetector, source)
+        assert len(results) == 1
 
 
 # -------------------------------------------------------------------------

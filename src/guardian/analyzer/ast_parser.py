@@ -58,6 +58,8 @@ _STATEVAR_RE = re.compile(
 
 # Blank / comment / docstring lines
 _BLANK_OR_COMMENT_RE = re.compile(r"^\s*(?:#.*)?$")
+_TRIPLE_DQ = '"""'
+_TRIPLE_SQ = "'''"
 
 
 def parse_vyper_source(source: str, file_path: str = "<unknown>") -> ContractInfo:
@@ -80,6 +82,7 @@ def parse_vyper_source(source: str, file_path: str = "<unknown>") -> ContractInf
 
     idx = 0
     in_docstring = False
+    active_doc_delim: str | None = None
     while idx < len(lines):
         line = lines[idx]
         stripped = line.strip()
@@ -87,18 +90,28 @@ def parse_vyper_source(source: str, file_path: str = "<unknown>") -> ContractInf
         # --- Top-level triple-quoted strings (docstrings / license) ---
         # Skip entire blocks so lines like 'Contract: Foo' don't become
         # state variables.
-        if not in_docstring and _is_top_level(line) and stripped.startswith('"""'):
-            # Single-line docstring: """..."""
-            if stripped.count('"""') >= 2:
+        if not in_docstring and _is_top_level(line):
+            delim = (
+                _TRIPLE_DQ
+                if stripped.startswith(_TRIPLE_DQ)
+                else _TRIPLE_SQ
+                if stripped.startswith(_TRIPLE_SQ)
+                else None
+            )
+            if delim is not None:
+                # Single-line docstring: """..."""  or  '''...'''
+                if stripped.count(delim) >= 2:
+                    idx += 1
+                    continue
+                # Multi-line block
+                in_docstring = True
+                active_doc_delim = delim
                 idx += 1
                 continue
-            # Multi-line: skip until closing """
-            in_docstring = True
-            idx += 1
-            continue
         if in_docstring:
-            if '"""' in stripped:
+            if active_doc_delim and active_doc_delim in stripped:
                 in_docstring = False
+                active_doc_delim = None
             idx += 1
             continue
 
@@ -218,14 +231,18 @@ def _parse_function(start_idx: int, lines: list[str]) -> tuple[FunctionInfo | No
     def_end_idx = idx
 
     if not m and stripped.startswith("def "):
-        # Multi-line function definition: join lines until we match
-        combined = stripped
-        for peek in range(idx + 1, min(idx + 15, len(lines))):
-            next_line = lines[peek].strip()
+        # Multi-line function definition: join lines until ':' closes the header.
+        # Stop at next top-level declaration to avoid over-consuming unrelated code.
+        combined_parts = [stripped]
+        for peek in range(idx + 1, len(lines)):
+            next_raw = lines[peek]
+            next_line = next_raw.strip()
             if not next_line:
-                break  # blank line means something went wrong
-            combined = combined + " " + next_line
-            normalized = re.sub(r"\s+", " ", combined)
+                continue
+            if _is_top_level(next_raw) and not next_line.startswith((")", "->")):
+                break
+            combined_parts.append(next_line)
+            normalized = re.sub(r"\s+", " ", " ".join(combined_parts))
             m = _FUNCDEF_RE.match(normalized)
             if m:
                 def_end_idx = peek

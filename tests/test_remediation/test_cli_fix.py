@@ -77,8 +77,8 @@ class TestFixCLI:
             tmp_path = f.name
 
         try:
-            # Pass 'n' to the overwrite prompt
-            runner.invoke(app, ["analyze", tmp_path, "--fix"], input="n\n")
+            # Pass 'y' to write fixed artifact, then 'n' to overwrite prompt
+            runner.invoke(app, ["analyze", tmp_path, "--fix"], input="y\nn\n")
             fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
             assert fixed_path.exists(), f"Expected {fixed_path} to be created"
             fixed_content = fixed_path.read_text(encoding="utf-8")
@@ -96,7 +96,7 @@ class TestFixCLI:
             tmp_path = f.name
 
         try:
-            runner.invoke(app, ["analyze", tmp_path, "--fix"], input="n\n")
+            runner.invoke(app, ["analyze", tmp_path, "--fix"], input="y\nn\n")
             fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
             if fixed_path.exists():
                 fixed_content = fixed_path.read_text(encoding="utf-8")
@@ -109,6 +109,44 @@ class TestFixCLI:
                 )
                 assert has_fix, f"Expected fixes in patched file. Content:\n{fixed_content}"
                 fixed_path.unlink()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_decline_write_does_not_create_fixed_file(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(app, ["analyze", tmp_path, "--fix"], input="n\n")
+            assert result.exit_code == 0
+            fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
+            assert not fixed_path.exists()
+            assert "no patched file was written" in result.output.lower()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_fix_overwrite_creates_backup_file(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+
+        try:
+            result = runner.invoke(app, ["analyze", tmp_path, "--fix"], input="y\ny\n")
+            assert result.exit_code == 0
+
+            backup_path = Path(tmp_path).with_suffix(".vy.bak")
+            assert backup_path.exists()
+            backup_content = backup_path.read_text(encoding="utf-8")
+            assert "raw_call(msg.sender" in backup_content
+
+            # fixed artifact should be removed when original is overwritten
+            fixed_path = Path(tmp_path).with_suffix(".fixed.vy")
+            assert not fixed_path.exists()
+
+            backup_path.unlink()
         finally:
             os.unlink(tmp_path)
 

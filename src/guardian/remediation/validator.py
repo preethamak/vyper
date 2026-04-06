@@ -10,6 +10,8 @@ checks:
 
 from __future__ import annotations
 
+import re
+
 
 class FixValidator:
     """Validate that a patched contract is structurally sound."""
@@ -19,6 +21,8 @@ class FixValidator:
         warnings: list[str] = []
         warnings.extend(self._check_brackets(lines))
         warnings.extend(self._check_defs(lines))
+        warnings.extend(self._check_indentation(lines))
+        warnings.extend(self._check_decorators(lines))
         return warnings
 
     @staticmethod
@@ -71,4 +75,34 @@ class FixValidator:
                         break
                 if not found_colon:
                     warnings.append(f"Line {i + 1}: def statement may be missing closing ':'.")
+        return warnings
+
+    @staticmethod
+    def _check_indentation(lines: list[str]) -> list[str]:
+        """Check for mixed tabs/spaces and non-4-space indentation."""
+        warnings: list[str] = []
+        for i, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            indent = line[: len(line) - len(line.lstrip())]
+            if "\t" in indent:
+                warnings.append(f"Line {i}: tab indentation detected; use spaces consistently.")
+                continue
+            if indent and (len(indent) % 4 != 0):
+                warnings.append(
+                    f"Line {i}: indentation width ({len(indent)}) is not a multiple of 4 spaces."
+                )
+        return warnings
+
+    @staticmethod
+    def _check_decorators(lines: list[str]) -> list[str]:
+        """Flag obviously malformed decorator syntax."""
+        warnings: list[str] = []
+        decorator_re = re.compile(r"^@[A-Za-z_]\w*(?:\(.*\))?$")
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped.startswith("@"):
+                continue
+            if not decorator_re.match(stripped):
+                warnings.append(f"Line {i}: malformed decorator syntax '{stripped}'.")
         return warnings

@@ -16,6 +16,7 @@ Cross-platform notes
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,10 +49,14 @@ class BaselineProfiler:
         self,
         contract_address: str,
         storage_dir: Path | None = None,
+        max_records: int = 50_000,
     ) -> None:
-        self.contract_address = contract_address.lower()
+        normalized = contract_address.strip().lower()
+        if not _ADDRESS_RE.fullmatch(normalized):
+            raise ValueError("Invalid contract address. Expected 0x-prefixed 40-hex format.")
+        self.contract_address = normalized
         self.storage_dir = storage_dir or _default_baseline_dir()
-        self._analyzer = TxAnalyzer()
+        self._analyzer = TxAnalyzer(max_records=max_records)
         self._profile: BaselineProfile | None = None
 
     # ------------------------------------------------------------------
@@ -121,3 +126,6 @@ class BaselineProfiler:
         """Clear ingested data and the in-memory profile."""
         self._analyzer.reset()
         self._profile = None
+
+
+_ADDRESS_RE = re.compile(r"^0x[a-f0-9]{40}$")

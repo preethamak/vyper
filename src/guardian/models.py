@@ -211,6 +211,14 @@ class AnalysisReport(BaseModel):
         description="Policy contract metadata for AI triage payload compatibility/governance.",
     )
     detectors_run: list[str] = Field(default_factory=list)
+    failed_detectors: list[str] = Field(
+        default_factory=list,
+        description="Detector names that failed during execution.",
+    )
+    detector_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description="Best-effort detector failure reasons keyed by detector name.",
+    )
     security_score: int = 100
     grade: SecurityGrade = SecurityGrade.A_PLUS
 

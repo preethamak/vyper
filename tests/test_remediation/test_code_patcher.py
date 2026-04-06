@@ -123,6 +123,22 @@ class TestCodePatcher:
         assert "Y" in result
         assert len(result) == 6
 
+    def test_overlapping_patches_raise(self) -> None:
+        lines = ["a", "b", "c", "d"]
+        patcher = CodePatcher(lines)
+        patcher.add_patch(Patch(start_line=2, end_line=3, new_lines=["x", "y"]))
+        with pytest.raises(ValueError, match="Overlapping patches"):
+            patcher.add_patch(Patch(start_line=3, end_line=4, new_lines=["u", "v"]))
+
+    def test_identical_single_line_insert_patches_are_coalesced(self) -> None:
+        lines = ["a", "target", "c"]
+        patcher = CodePatcher(lines)
+        patcher.add_patch(Patch(start_line=2, end_line=2, new_lines=["x", "target"]))
+        patcher.add_patch(Patch(start_line=2, end_line=2, new_lines=["y", "target"]))
+
+        result = patcher.apply()
+        assert result == ["a", "x", "y", "target", "c"]
+
     def test_original_property(self) -> None:
         lines = ["one", "two"]
         patcher = CodePatcher(lines)

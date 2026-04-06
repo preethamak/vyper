@@ -70,6 +70,12 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     )
     con.print()
 
+    if report.failed_detectors:
+        failed = ", ".join(report.failed_detectors)
+        con.print(f"  [bold red]⚠ Detector failures:[/bold red] [red]{failed}[/red]")
+        con.print("  [dim]Analysis may be incomplete due to detector runtime errors.[/dim]")
+        con.print()
+
     if not report.findings:
         con.print("  [green bold]✅ No issues found — looking good![/green bold]")
         con.print()
@@ -135,9 +141,13 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
 
 def _print_footer(con: Console, report: AnalysisReport) -> None:
     """Print the summary footer line."""
+    health_msg = ""
+    if report.failed_detectors:
+        health_msg = f" │ Score trust: DEGRADED │ Failed detectors: {len(report.failed_detectors)}"
     con.print(
         f"  [dim]Detectors run: {len(report.detectors_run)} │ "
-        f"Findings: {len(report.findings)} │ "
+        f"Findings: {len(report.findings)}"
+        f"{health_msg} │ "
         f"Use [bold]--fix[/bold] to auto-patch[/dim]"
     )
     con.print()

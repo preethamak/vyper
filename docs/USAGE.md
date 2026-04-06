@@ -27,6 +27,12 @@ vyper-guard analyze contract.vy --format markdown --output report.md
 # If --format is omitted, the default comes from .guardianrc (reporting.default_format)
 ```
 
+Security notes:
+
+- Config auto-discovery trusts only the current working directory by default.
+- To allow parent-directory config discovery, set `GUARDIAN_TRUST_PARENT_CONFIG=true`.
+- Invalid environment overrides for constrained fields are ignored and safe defaults are kept.
+
 ### Explainability Fields (JSON)
 
 JSON findings include explainability metadata when available:
@@ -55,6 +61,10 @@ vyper-guard analyze contract.vy --format json --ai-triage \
 export GUARDIAN_LLM_API_KEY="<your_key>"
 vyper-guard analyze contract.vy --format json --ai-triage \
   --ai-triage-mode llm --ai-llm-model gpt-5
+
+# Explicitly allow deterministic fallback when LLM triage is unavailable
+vyper-guard analyze contract.vy --format json --ai-triage \
+  --ai-triage-mode llm --allow-ai-fallback
 ```
 
 JSON triage entries include deterministic scoring rationale fields:
@@ -77,7 +87,8 @@ When triage is enabled, JSON output also includes a top-level policy contract:
 LLM mode notes:
 
 - LLM triage is advisory only and **cannot** override detector findings.
-- If LLM is unavailable/misconfigured, CLI falls back to deterministic triage.
+- By default, LLM triage failures return a non-zero exit.
+- Use `--allow-ai-fallback` to explicitly allow deterministic fallback output.
 - LLM calls use an OpenAI-compatible `chat/completions` API.
 
 ### AI Config Commands (Terminal-first)
@@ -150,8 +161,9 @@ Risk tiers:
 1. The contract is analyzed normally (findings displayed)
 2. For each finding, an auto-fix is generated (if possible)
 3. Each fix is shown with a unified diff preview
-4. (Default) A patched file is written to `contract.fixed.vy`
-5. (Default) You're prompted whether to overwrite the original
+4. You are prompted before writing `contract.fixed.vy` (default: No)
+5. If written, you are prompted before overwriting the original (default: No)
+6. On overwrite, a backup is always created first (`.bak`, then `.bak.N` if needed)
 
 If `--fix-dry-run` is used, steps 4-5 are skipped and no files are modified.
 
@@ -219,6 +231,10 @@ vyper-guard analyze-address 0xYourContractAddress --format json
 vyper-guard analyze-address 0xYourContractAddress \
   --save-source fetched.vy --format markdown --output report.md
 
+# If LLM triage is enabled, fallback is opt-in
+vyper-guard analyze-address 0xYourContractAddress \
+  --ai-triage --ai-triage-mode llm --allow-ai-fallback
+
 # Configure explorer defaults in ~/.guardianrc
 vyper-guard explorer config set provider auto
 vyper-guard explorer config set network sepolia
@@ -238,6 +254,10 @@ vyper-guard agent "What are the top 3 security risks and fixes?" --file contract
 
 # Ask with explorer address context
 vyper-guard agent "Summarize ABI attack surface" --address 0xYourContractAddress
+
+# Fallback output is opt-in when explorer/LLM calls fail
+vyper-guard agent "Summarize ABI attack surface" \
+  --address 0xYourContractAddress --allow-fallback
 
 # Use persistent memory + optional sandbox helper script
 vyper-guard agent "Validate this patch plan" \
@@ -263,6 +283,11 @@ vyper-guard agent-memory stats --memory-file .guardian_agent_memory.jsonl
 vyper-guard agent-memory tail --memory-file .guardian_agent_memory.jsonl --limit 5
 vyper-guard agent-memory clear --memory-file .guardian_agent_memory.jsonl
 ```
+
+Agent mode notes:
+
+- `agent` is strict by default: explorer/LLM failures return a non-zero exit.
+- Use `--allow-fallback` only when you explicitly want deterministic fallback output.
 
 **Example output:**
 
@@ -359,7 +384,16 @@ vyper-guard monitor 0xAddr --rpc https://rpc.url --alert-webhook https://hooks.s
 
 # With anomaly detection baseline
 vyper-guard monitor 0xAddr --rpc https://rpc.url --baseline baseline.json
+
+# Bound per-poll catch-up work and in-memory history
+vyper-guard monitor 0xAddr --rpc https://rpc.url \
+  --max-backfill-blocks 200 --max-history-records 20000
 ```
+
+Webhook security defaults:
+
+- Only `https://` webhook URLs are accepted.
+- Local/private destinations (`localhost`, private IP ranges, `.local`, `.internal`) are blocked.
 
 ### Build a Baseline Profile
 
@@ -416,12 +450,15 @@ ai_triage:
 |----------|-------------|
 | `GUARDIAN_DEFAULT_FORMAT` | Default output format (`cli`, `json`, `markdown`) |
 | `GUARDIAN_SEVERITY_THRESHOLD` | Default minimum severity |
+| `GUARDIAN_MAX_AUTO_FIX_TIER` | Default auto-remediation tier ceiling (`A`, `B`, `C`) |
+| `GUARDIAN_TRUST_PARENT_CONFIG` | Allow `.guardianrc` auto-discovery in parent directories (`true/false`) |
 | `GUARDIAN_AI_TRIAGE` | Enable AI triage by default (`true/false`) |
 | `GUARDIAN_AI_TRIAGE_MIN_SEVERITY` | Minimum triage severity (`INFO..CRITICAL`) |
 | `GUARDIAN_AI_TRIAGE_MAX_ITEMS` | Maximum triage rows |
 | `GUARDIAN_AI_TRIAGE_POLICY_STATUS` | Triage policy status (`stable/experimental/deprecated`) |
 | `GUARDIAN_AI_TRIAGE_DEPRECATION_ANNOUNCED` | Deprecation announcement flag (`true/false`) |
 | `GUARDIAN_AI_TRIAGE_DEPRECATION_SUNSET_AFTER` | Policy deprecation sunset date string |
+| `GUARDIAN_LLM_MEMORY_MAX_ENTRIES` | Cap persisted agent memory entries |
 
 ## Exit Codes
 

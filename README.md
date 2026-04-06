@@ -19,15 +19,15 @@ Scan `.vy` files for vulnerabilities and get instant feedback from your terminal
 
 ## What is Vyper Guard?
 
-Vyper Guard is a **fast, accurate static analyzer** built specifically for Vyper smart contracts. It detects security vulnerabilities, logic risks, and best-practice violations before deployment.
+Vyper Guard is a static security analyzer for Vyper contracts. It finds common vulnerability patterns, highlights risky logic, and provides practical remediation guidance before deployment.
 
-**Key Features:**
--  Lightning-fast analysis (scan in milliseconds)
--  Vyper-native (understands decorators, built-in safety)
--  12+ specialized security detectors
--  Auto-fix detected vulnerabilities
--  Clear security scoring (0-100)
--  Multiple output formats (CLI, JSON, Markdown)
+**Key features:**
+- Fast local analysis
+- Vyper-aware parsing and detector logic
+- 12 built-in security detectors
+- Optional remediation workflow with diff previews
+- Security score (0-100) with trust-aware penalties
+- CLI, JSON, and Markdown output modes
 
 ---
 
@@ -141,10 +141,14 @@ Each contract receives a **0-100 security score**:
 Base Score: 100
 
 Deductions:
-  CRITICAL: -40 points (capped at -80)
-  HIGH:     -20 points (capped at -60)
-  MEDIUM:   -8 points  (capped at -24)
-  LOW:      -3 points  (capped at -9)
+  CRITICAL: -40 points (capped at -50)
+  HIGH:     -20 points (capped at -40)
+  MEDIUM:   -8 points  (capped at -20)
+  LOW:      -3 points  (capped at -10)
+  INFO:     -1 point   (capped at -5)
+
+Additional trust penalty:
+  Detector runtime failures: -10 each (capped at -30)
 ```
 
 ### Grade Scale
@@ -183,20 +187,22 @@ Deductions:
 ## Recent 0.3.x Highlights
 
 - Explorer-first workflow (`explorer`, `analyze-address`) for verified source analysis.
-- AI advisory triage with deterministic fallback (`--ai-triage`).
-- LLM agent mode with memory/sandbox support (`agent`, `agent memory`).
+- AI advisory triage with strict LLM mode by default and explicit fallback (`--allow-ai-fallback`).
+- LLM agent mode with memory/sandbox support (`agent`, `agent-memory`).
 - Improved `stats --graph` HTML dashboard with clearer function-call/control-flow visuals.
 
 ### Documentation Map
 
+- Docs index: [docs/README.md](docs/README.md)
 - Full CLI usage and examples: [docs/USAGE.md](docs/USAGE.md)
 - Detector catalog and rationale: [docs/DETECTORS.md](docs/DETECTORS.md)
 - Installation and maintainer publishing flow: [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- Security defaults and hardening guide: [docs/SECURITY_HARDENING.md](docs/SECURITY_HARDENING.md)
 - Release notes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
 ### Feature Quick Pointers
 
-- AI triage: `analyze --ai-triage` (+ `--ai-triage-mode llm` when configured)
+- AI triage: `analyze --ai-triage` (+ `--ai-triage-mode llm`; use `--allow-ai-fallback` only when explicitly desired)
 - AI config helper: `ai config set/show`
 - Graph exports: `stats <file> --graph` (`--graph-json`, `--graph-html`)
 - Explorer + verified-source analysis: `explorer`, `analyze-address`
@@ -255,13 +261,12 @@ analysis:
 # Reporting
 reporting:
   default_format: cli
-  output_directory: "./reports"
-  include_fix_suggestions: true
+  show_source_snippets: true
+  show_fix_suggestions: true
 
 # Auto-Fix
 remediation:
-  auto_apply: false
-  backup_original: true
+  max_auto_fix_tier: C
 ```
 
 ---
@@ -363,7 +368,7 @@ Before deploying:
 
 Contributions welcome! Here's how:
 
--  Report bugs via [GitHub Issues](https://github.com/preethamak/vyper-guard/issues)
+-  Report bugs via [GitHub Issues](https://github.com/preethamak/vyper/issues)
 -  Suggest features or new detectors
 -  Improve documentation
 -  Submit pull requests
@@ -371,8 +376,8 @@ Contributions welcome! Here's how:
 ### Development Setup
 
 ```bash
-git clone https://github.com/preethamak/vyper-guard.git
-cd vyper-guard
+git clone https://github.com/preethamak/vyper.git
+cd vyper
 pip install -e ".[dev]"
 pytest
 ```
@@ -415,7 +420,7 @@ Special thanks to the [Vyper](https://github.com/vyperlang/vyper) team.
 
 ## Contact
 
-- **GitHub Issues:** [Report bugs](https://github.com/preethamak/vyper-guard/issues)
+- **GitHub Issues:** [Report bugs](https://github.com/preethamak/vyper/issues)
 - **GitHub:** [@preethamak](https://github.com/preethamak)
 
 ---

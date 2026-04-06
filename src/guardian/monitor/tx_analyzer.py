@@ -38,7 +38,8 @@ class TxAnalyzer:
     baseline profiler.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_records: int = 50_000) -> None:
+        self._max_records = max(1, int(max_records))
         self._records: list[TransactionRecord] = []
         self._selector_counts: Counter[str] = Counter()
         self._gas_values: list[int] = []
@@ -52,6 +53,9 @@ class TxAnalyzer:
 
     def ingest(self, record: TransactionRecord) -> None:
         """Process a single ``TransactionRecord``."""
+        if len(self._records) >= self._max_records:
+            self._evict_oldest()
+
         self._records.append(record)
 
         if record.function_selector:
@@ -63,6 +67,30 @@ class TxAnalyzer:
 
         if not record.success:
             self._failure_count += 1
+
+    def _evict_oldest(self) -> None:
+        """Drop oldest record to keep memory bounded."""
+        if not self._records:
+            return
+        oldest = self._records.pop(0)
+
+        if oldest.function_selector:
+            selector = oldest.function_selector
+            self._selector_counts[selector] -= 1
+            if self._selector_counts[selector] <= 0:
+                self._selector_counts.pop(selector, None)
+
+        if self._gas_values:
+            self._gas_values.pop(0)
+        if self._value_flows:
+            self._value_flows.pop(0)
+
+        self._sender_counts[oldest.from_address] -= 1
+        if self._sender_counts[oldest.from_address] <= 0:
+            self._sender_counts.pop(oldest.from_address, None)
+
+        if not oldest.success and self._failure_count > 0:
+            self._failure_count -= 1
 
     def ingest_many(self, records: list[TransactionRecord]) -> None:
         for rec in records:

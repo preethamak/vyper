@@ -182,6 +182,18 @@ class TestTxAnalyzer:
         assert a.total == 0
         assert a.gas_stats()["mean"] == 0
 
+    def test_bounded_memory_evicts_oldest(self) -> None:
+        from guardian.monitor.tx_analyzer import TxAnalyzer
+
+        a = TxAnalyzer(max_records=2)
+        a.ingest(_tx(tx_hash="0x1", success=False))
+        a.ingest(_tx(tx_hash="0x2", success=True))
+        a.ingest(_tx(tx_hash="0x3", success=True))
+
+        assert a.total == 2
+        # Oldest failing tx was evicted, so failed ratio should be 0.0 now.
+        assert a.failed_ratio == pytest.approx(0.0)
+
 
 # ===================================================================
 # PatternMatcher
@@ -345,6 +357,23 @@ class TestBaselineProfiler:
         with pytest.raises(ValueError, match="No baseline"):
             bp.save()
 
+    def test_invalid_contract_address_rejected(self, tmp_path: Path) -> None:
+        from guardian.monitor.baseline import BaselineProfiler
+
+        with pytest.raises(ValueError, match="Invalid contract address"):
+            BaselineProfiler("../../etc/passwd", storage_dir=tmp_path)
+
+    def test_baseline_respects_max_history_records(self, tmp_path: Path) -> None:
+        from guardian.monitor.baseline import BaselineProfiler
+
+        bp = BaselineProfiler(CONTRACT, storage_dir=tmp_path, max_records=2)
+        bp.ingest(_tx(tx_hash="0x1", ts_offset_secs=0))
+        bp.ingest(_tx(tx_hash="0x2", ts_offset_secs=10))
+        bp.ingest(_tx(tx_hash="0x3", ts_offset_secs=20))
+
+        profile = bp.build()
+        assert profile.tx_count == 2
+
 
 # ===================================================================
 # AlertManager
@@ -426,6 +455,55 @@ class TestAlertManager:
             assert mgr.dispatch(alert) is True
             mock_open.assert_called_once()
 
+    def test_webhook_blocks_non_https(self) -> None:
+        from guardian.monitor.alerting import AlertManager
+
+        mgr = AlertManager(
+            webhook_url="http://hooks.example.com/test",
+            enable_console=False,
+            rate_limit_secs=0,
+        )
+        alert = self._make_alert()
+
+        with patch("guardian.monitor.alerting.urllib.request.urlopen") as mock_open:
+            assert mgr.dispatch(alert) is True
+            mock_open.assert_not_called()
+
+    def test_webhook_blocks_private_host_by_default(self) -> None:
+        from guardian.monitor.alerting import AlertManager
+
+        mgr = AlertManager(
+            webhook_url="https://127.0.0.1/hooks/test",
+            enable_console=False,
+            rate_limit_secs=0,
+        )
+        alert = self._make_alert()
+
+        with patch("guardian.monitor.alerting.urllib.request.urlopen") as mock_open:
+            assert mgr.dispatch(alert) is True
+            mock_open.assert_not_called()
+
+    def test_webhook_private_host_allowed_with_override(self) -> None:
+        from guardian.monitor.alerting import AlertManager
+
+        mgr = AlertManager(
+            webhook_url="https://127.0.0.1/hooks/test",
+            enable_console=False,
+            rate_limit_secs=0,
+            allow_private_webhooks=True,
+        )
+        alert = self._make_alert()
+
+        with patch("guardian.monitor.alerting.urllib.request.urlopen") as mock_open:
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value = mock_resp
+
+            assert mgr.dispatch(alert) is True
+            mock_open.assert_called_once()
+
     def test_email_dispatch(self) -> None:
         from guardian.monitor.alerting import AlertManager
 
@@ -452,6 +530,35 @@ class TestAlertManager:
 
             assert mgr.dispatch(alert) is True
             mock_smtp_class.assert_called_once_with("smtp.example.com", 587, timeout=15)
+
+    def test_email_dispatch_supports_password_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from guardian.monitor.alerting import AlertManager
+
+        monkeypatch.setenv("GUARDIAN_SMTP_PASS", "secret-pass")
+
+        email_cfg = {
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "from_addr": "guardian@example.com",
+            "to_addrs": ["admin@example.com"],
+            "username": "user",
+            "password_env": "GUARDIAN_SMTP_PASS",
+            "use_tls": True,
+        }
+        mgr = AlertManager(
+            email_config=email_cfg,
+            enable_console=False,
+            rate_limit_secs=0,
+        )
+        alert = self._make_alert()
+
+        with patch("guardian.monitor.alerting.smtplib.SMTP") as mock_smtp_class:
+            mock_srv = MagicMock()
+            mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_srv)
+            mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+            assert mgr.dispatch(alert) is True
+            mock_srv.login.assert_called_once_with("user", "secret-pass")
 
 
 # ===================================================================
@@ -532,6 +639,23 @@ class TestChainWatcher:
             # First poll: last_block starts at 0 → gets set to 99, fetches block 100
             assert len(records) == 1
 
+    def test_poll_once_respects_backfill_cap(self) -> None:
+        mock_mod = self._mock_web3_module()
+        with patch.dict("sys.modules", {"web3": mock_mod}):
+            from guardian.monitor.chain_watcher import ChainWatcher
+
+            cw = ChainWatcher(
+                contract_address=CONTRACT,
+                rpc_url="http://localhost:8545",
+                max_backfill_blocks=2,
+            )
+            cw._last_block = 90
+            cw.w3.eth.block_number = 100
+
+            _ = cw.poll_once()
+            # With cap=2 and start=91, watcher should only advance to 92 in this poll.
+            assert cw._last_block == 92
+
     def test_on_transaction_callback(self) -> None:
         mock_mod = self._mock_web3_module()
         captured: list[TransactionRecord] = []
@@ -572,6 +696,28 @@ class TestChainWatcher:
             )
             cw.stop()
             assert cw._running is False
+
+    def test_invalid_contract_address_raises(self) -> None:
+        mock_mod = self._mock_web3_module()
+        with patch.dict("sys.modules", {"web3": mock_mod}):
+            from guardian.monitor.chain_watcher import ChainWatcher
+
+            with pytest.raises(ValueError, match="Invalid contract address"):
+                ChainWatcher(
+                    contract_address="not-an-address",
+                    rpc_url="http://localhost:8545",
+                )
+
+    def test_invalid_rpc_scheme_raises(self) -> None:
+        mock_mod = self._mock_web3_module()
+        with patch.dict("sys.modules", {"web3": mock_mod}):
+            from guardian.monitor.chain_watcher import ChainWatcher
+
+            with pytest.raises(ValueError, match="Invalid rpc_url scheme"):
+                ChainWatcher(
+                    contract_address=CONTRACT,
+                    rpc_url="ftp://localhost:8545",
+                )
 
 
 # ===================================================================

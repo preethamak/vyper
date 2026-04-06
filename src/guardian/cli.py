@@ -6,6 +6,7 @@ Works cross-platform on Linux, macOS, and Windows.
 
 from __future__ import annotations
 
+import contextlib
 import html as _html
 import json as _json
 import math
@@ -57,7 +58,7 @@ app = typer.Typer(
     add_completion=True,
     no_args_is_help=False,
     rich_markup_mode="rich",
-    pretty_exceptions_enable=True,
+    pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -148,6 +149,75 @@ _GRADE_STYLE: dict[str, str] = {
 _RISK_TIER_ORDER: dict[str, int] = {"A": 1, "B": 2, "C": 3}
 
 
+def _resolve_ai_triage_settings(
+    *,
+    cfg,
+    ai: bool,
+    ai_triage: bool | None,
+    ai_triage_min_severity: str | None,
+    ai_triage_max_items: int | None,
+    ai_triage_mode: str | None,
+    ai_allow_fallback: bool,
+) -> tuple[bool, Severity, int, str, bool]:
+    """Resolve canonical AI-triage execution settings."""
+    triage_enabled = True if ai else (ai_triage if ai_triage is not None else cfg.ai_triage.enabled)
+
+    triage_min_name = (ai_triage_min_severity or cfg.ai_triage.min_severity).upper()
+    try:
+        triage_min = Severity(triage_min_name)
+    except ValueError:
+        console.print(f"[{ERR}]Invalid ai-triage minimum severity: {triage_min_name}[/{ERR}]")
+        raise typer.Exit(code=2) from None
+
+    triage_max_items = ai_triage_max_items or cfg.ai_triage.max_items
+
+    if ai_triage_mode is not None:
+        triage_mode = ai_triage_mode.strip().lower()
+    elif ai:
+        has_llm_config = bool(cfg.llm.enabled or (cfg.llm.api_key and str(cfg.llm.api_key).strip()))
+        triage_mode = "llm" if has_llm_config else "deterministic"
+    else:
+        triage_mode = "deterministic"
+
+    if triage_mode not in {"deterministic", "llm"}:
+        console.print(
+            f"[{ERR}]Invalid ai-triage mode: {triage_mode}. Use deterministic or llm.[/{ERR}]"
+        )
+        raise typer.Exit(code=2)
+
+    fallback_allowed = ai_allow_fallback or (ai and ai_triage_mode is None)
+    return triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed
+
+
+def _apply_deterministic_triage(
+    report: AnalysisReport, *, cfg, triage_min: Severity, triage_max_items: int
+) -> None:
+    deprecation_sunset_after = cfg.ai_triage.deprecation_sunset_after
+    apply_ai_triage(
+        report,
+        max_items=triage_max_items,
+        min_severity=triage_min,
+        policy_status=cfg.ai_triage.policy_status,
+        deprecation_announced=cfg.ai_triage.deprecation_announced,
+        deprecation_sunset_after=(
+            str(deprecation_sunset_after) if deprecation_sunset_after is not None else None
+        ),
+    )
+
+
+def _annotate_llm_fallback(report: AnalysisReport, reason: str) -> None:
+    """Record explicit fallback provenance when LLM triage degrades to deterministic mode."""
+    policy = report.ai_triage_policy if isinstance(report.ai_triage_policy, dict) else {}
+    warnings = policy.get("warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+    warnings.append(f"LLM triage fallback activated: {reason}")
+    policy["warnings"] = warnings
+    policy["fallback_reason"] = reason
+    policy["fallback_from"] = "llm"
+    report.ai_triage_policy = policy
+
+
 def _user_config_path() -> Path:
     return Path.home() / ".guardianrc"
 
@@ -167,6 +237,8 @@ def _save_user_config_yaml(data: dict[str, object]) -> None:
     path = _user_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    with contextlib.suppress(OSError):
+        path.chmod(0o600)
 
 
 def _set_user_config_value(section: str, key: str, value: object) -> None:
@@ -451,6 +523,11 @@ def analyze(
         "--ai-llm-model",
         help="Override LLM model for --ai-triage-mode llm.",
     ),
+    ai_allow_fallback: bool = typer.Option(
+        False,
+        "--allow-ai-fallback",
+        help="Allow deterministic fallback when LLM triage fails (disabled by default).",
+    ),
 ) -> None:
     """Analyse a Vyper contract for security vulnerabilities."""
     setup_logging(verbose)
@@ -553,17 +630,16 @@ def analyze(
         )
 
     # Optional AI-assisted triage post-processor (deterministic, verdict-preserving).
-    triage_enabled = True if ai else (ai_triage if ai_triage is not None else cfg.ai_triage.enabled)
-    triage_min_name = (ai_triage_min_severity or cfg.ai_triage.min_severity).upper()
-    try:
-        triage_min = Severity(triage_min_name)
-    except ValueError:
-        console.print(f"[{ERR}]Invalid ai-triage minimum severity: {triage_min_name}[/{ERR}]")
-        raise typer.Exit(code=2) from None
-
-    triage_max_items = ai_triage_max_items or cfg.ai_triage.max_items
-    triage_mode = (
-        (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed = (
+        _resolve_ai_triage_settings(
+            cfg=cfg,
+            ai=ai,
+            ai_triage=ai_triage,
+            ai_triage_min_severity=ai_triage_min_severity,
+            ai_triage_max_items=ai_triage_max_items,
+            ai_triage_mode=ai_triage_mode,
+            ai_allow_fallback=ai_allow_fallback,
+        )
     )
     if triage_enabled:
         if triage_mode == "llm":
@@ -577,39 +653,35 @@ def analyze(
                     file_path.read_text(encoding="utf-8"),
                     api_key=llm_key,
                     model=llm_model,
+                    provider=cfg.llm.provider,
                     base_url=cfg.llm.base_url,
                     min_severity=triage_min,
                     max_items=triage_max_items,
                     temperature=cfg.llm.temperature,
                 )
             except LLMTriageError as exc:
+                if not fallback_allowed:
+                    console.print(
+                        f"[{ERR}]LLM triage failed:[/{ERR}] {exc}. "
+                        "Re-run with --allow-ai-fallback to enable deterministic fallback."
+                    )
+                    raise typer.Exit(code=2) from exc
                 console.print(
-                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage."
+                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage (--allow-ai-fallback)."
                 )
-                deprecation_sunset_after = cfg.ai_triage.deprecation_sunset_after
-                apply_ai_triage(
+                _apply_deterministic_triage(
                     report,
-                    max_items=triage_max_items,
-                    min_severity=triage_min,
-                    policy_status=cfg.ai_triage.policy_status,
-                    deprecation_announced=cfg.ai_triage.deprecation_announced,
-                    deprecation_sunset_after=(
-                        str(deprecation_sunset_after)
-                        if deprecation_sunset_after is not None
-                        else None
-                    ),
+                    cfg=cfg,
+                    triage_min=triage_min,
+                    triage_max_items=triage_max_items,
                 )
+                _annotate_llm_fallback(report, str(exc))
         else:
-            deprecation_sunset_after = cfg.ai_triage.deprecation_sunset_after
-            apply_ai_triage(
+            _apply_deterministic_triage(
                 report,
-                max_items=triage_max_items,
-                min_severity=triage_min,
-                policy_status=cfg.ai_triage.policy_status,
-                deprecation_announced=cfg.ai_triage.deprecation_announced,
-                deprecation_sunset_after=(
-                    str(deprecation_sunset_after) if deprecation_sunset_after is not None else None
-                ),
+                cfg=cfg,
+                triage_min=triage_min,
+                triage_max_items=triage_max_items,
             )
 
     # Output
@@ -689,6 +761,7 @@ def scan(
     ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
     ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
+    ai_allow_fallback: bool = typer.Option(False, "--allow-ai-fallback"),
 ) -> None:
     """Alias for 'analyze' — scan a Vyper contract for vulnerabilities."""
     analyze(
@@ -710,6 +783,7 @@ def scan(
         ai_triage_max_items=ai_triage_max_items,
         ai_triage_mode=ai_triage_mode,
         ai_llm_model=ai_llm_model,
+        ai_allow_fallback=ai_allow_fallback,
     )
 
 
@@ -760,6 +834,20 @@ def ai_config_set(
         resolved = value.strip()
 
     _set_user_config_value("llm", target_key, resolved)
+    if normalized == "provider":
+        provider_value = str(resolved).strip().lower()
+        if provider_value in {"gemini", "google", "google_gemini"}:
+            # Apply Gemini OpenAI-compatible defaults for immediate usability.
+            _set_user_config_value(
+                "llm", "base_url", "https://generativelanguage.googleapis.com/v1beta/openai"
+            )
+            current = load_config().llm.model
+            if current.startswith("gpt-"):
+                _set_user_config_value("llm", "model", "gemini-2.0-flash")
+
+    if normalized == "api-key":
+        # Setting an API key should make AI features immediately usable.
+        _set_user_config_value("llm", "enabled", True)
     if normalized == "api-key":
         console.print(
             f"[{OK}]AI API key saved to user config:[/{OK}] [bold]{_user_config_path()}[/bold] "
@@ -789,6 +877,7 @@ def ai_config_show() -> None:
         "temperature": cfg.llm.temperature,
         "max_items": cfg.llm.max_items,
         "memory_file": cfg.llm.memory_file,
+        "memory_max_entries": cfg.llm.memory_max_entries,
         "api_key_set": bool(api_key),
         "api_key": redacted,
         "user_config_path": str(_user_config_path()),
@@ -1050,6 +1139,11 @@ def fix_cmd(
     ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
     ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
+    ai_allow_fallback: bool = typer.Option(
+        False,
+        "--allow-ai-fallback",
+        help="Allow deterministic fallback when LLM triage fails (disabled by default).",
+    ),
 ) -> None:
     """Dedicated remediation command with tier-safe fix pipeline."""
     analyze(
@@ -1071,6 +1165,7 @@ def fix_cmd(
         ai_triage_max_items=ai_triage_max_items,
         ai_triage_mode=ai_triage_mode,
         ai_llm_model=ai_llm_model,
+        ai_allow_fallback=ai_allow_fallback,
     )
 
 
@@ -1099,11 +1194,21 @@ def analyze_address(
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
     ci: bool = typer.Option(False, "--ci"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
+    ai: bool = typer.Option(
+        False,
+        "--ai",
+        help="Enable AI-assisted audit orchestration (preferred alias for AI triage mode).",
+    ),
     ai_triage: bool | None = typer.Option(None, "--ai-triage/--no-ai-triage"),
     ai_triage_min_severity: str | None = typer.Option(None, "--ai-triage-min-severity"),
     ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
     ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
+    ai_allow_fallback: bool = typer.Option(
+        False,
+        "--allow-ai-fallback",
+        help="Allow deterministic fallback when LLM triage fails (disabled by default).",
+    ),
 ) -> None:
     """Analyze a deployed contract address by fetching verified source from explorer."""
     setup_logging(verbose)
@@ -1178,17 +1283,16 @@ def analyze_address(
     report.vyper_version = report.vyper_version or info.compiler_version
     elapsed_ms = (_time.perf_counter() - t0) * 1000
 
-    triage_enabled = ai_triage if ai_triage is not None else cfg.ai_triage.enabled
-    triage_min_name = (ai_triage_min_severity or cfg.ai_triage.min_severity).upper()
-    try:
-        triage_min = Severity(triage_min_name)
-    except ValueError:
-        console.print(f"[{ERR}]Invalid ai-triage minimum severity: {triage_min_name}[/{ERR}]")
-        raise typer.Exit(code=2) from None
-
-    triage_max_items = ai_triage_max_items or cfg.ai_triage.max_items
-    triage_mode = (
-        (ai_triage_mode or ("llm" if cfg.llm.enabled else "deterministic")).strip().lower()
+    triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed = (
+        _resolve_ai_triage_settings(
+            cfg=cfg,
+            ai=ai,
+            ai_triage=ai_triage,
+            ai_triage_min_severity=ai_triage_min_severity,
+            ai_triage_max_items=ai_triage_max_items,
+            ai_triage_mode=ai_triage_mode,
+            ai_allow_fallback=ai_allow_fallback,
+        )
     )
     if triage_enabled:
         if triage_mode == "llm":
@@ -1202,39 +1306,35 @@ def analyze_address(
                     info.source_code,
                     api_key=llm_key,
                     model=llm_model,
+                    provider=cfg.llm.provider,
                     base_url=cfg.llm.base_url,
                     min_severity=triage_min,
                     max_items=triage_max_items,
                     temperature=cfg.llm.temperature,
                 )
             except LLMTriageError as exc:
+                if not fallback_allowed:
+                    console.print(
+                        f"[{ERR}]LLM triage failed:[/{ERR}] {exc}. "
+                        "Re-run with --allow-ai-fallback to enable deterministic fallback."
+                    )
+                    raise typer.Exit(code=2) from exc
                 console.print(
-                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage."
+                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage (--allow-ai-fallback)."
                 )
-                deprecation_sunset_after = cfg.ai_triage.deprecation_sunset_after
-                apply_ai_triage(
+                _apply_deterministic_triage(
                     report,
-                    max_items=triage_max_items,
-                    min_severity=triage_min,
-                    policy_status=cfg.ai_triage.policy_status,
-                    deprecation_announced=cfg.ai_triage.deprecation_announced,
-                    deprecation_sunset_after=(
-                        str(deprecation_sunset_after)
-                        if deprecation_sunset_after is not None
-                        else None
-                    ),
+                    cfg=cfg,
+                    triage_min=triage_min,
+                    triage_max_items=triage_max_items,
                 )
+                _annotate_llm_fallback(report, str(exc))
         else:
-            deprecation_sunset_after = cfg.ai_triage.deprecation_sunset_after
-            apply_ai_triage(
+            _apply_deterministic_triage(
                 report,
-                max_items=triage_max_items,
-                min_severity=triage_min,
-                policy_status=cfg.ai_triage.policy_status,
-                deprecation_announced=cfg.ai_triage.deprecation_announced,
-                deprecation_sunset_after=(
-                    str(deprecation_sunset_after) if deprecation_sunset_after is not None else None
-                ),
+                cfg=cfg,
+                triage_min=triage_min,
+                triage_max_items=triage_max_items,
             )
 
     if fmt == "json":
@@ -1481,6 +1581,9 @@ def agent_run(
     address: str | None = typer.Option(
         None, "--address", help="Optional contract address context via explorer."
     ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="LLM provider override (e.g., gemini, openai_compatible)."
+    ),
     model: str | None = typer.Option(None, "--model", help="LLM model (default from config)."),
     base_url: str | None = typer.Option(None, "--base-url", help="LLM API base URL."),
     api_key: str | None = typer.Option(
@@ -1495,7 +1598,18 @@ def agent_run(
     explorer_api_key: str | None = typer.Option(
         None, "--explorer-api-key", help="Explorer API key override for --address context."
     ),
+    allow_fallback: bool = typer.Option(
+        False,
+        "--allow-fallback",
+        help="Allow deterministic fallback response when explorer/LLM calls fail.",
+    ),
     memory_file: Path | None = typer.Option(None, "--memory-file", help="JSONL memory file path."),
+    memory_max_entries: int | None = typer.Option(
+        None,
+        "--memory-max-entries",
+        min=1,
+        help="Maximum number of memory entries to retain in JSONL store.",
+    ),
     sandbox_script: Path | None = typer.Option(
         None, "--sandbox-script", help="Optional python script to run in sandbox."
     ),
@@ -1520,13 +1634,22 @@ def agent_run(
         raise typer.Exit(code=2)
 
     cfg = load_config(None)
+    resolved_provider = (provider or cfg.llm.provider).strip().lower()
     resolved_model = model or cfg.llm.model
     resolved_base = base_url or cfg.llm.base_url
     resolved_key = api_key or cfg.llm.api_key or ""
     resolved_memory = memory_file or Path(cfg.llm.memory_file)
+    resolved_memory_max_entries = memory_max_entries or cfg.llm.memory_max_entries
     resolved_explorer_provider = (explorer_provider or cfg.explorer.provider).strip().lower()
     resolved_explorer_network = (explorer_network or cfg.explorer.network).strip().lower()
     resolved_explorer_key = explorer_api_key or cfg.explorer.api_key
+
+    if address and explorer_provider is None and resolved_explorer_provider == "etherscan":
+        resolved_explorer_provider = "etherscan,blockscout,sourcify"
+        console.print(
+            f"[{WARN}]Explorer provider defaulted to fallback chain:[/{WARN}] "
+            "etherscan,blockscout,sourcify"
+        )
 
     context: dict[str, object] = {}
     context["available_tools"] = [
@@ -1572,6 +1695,12 @@ def agent_run(
                 "abi_entries": len(info.abi or []),
             }
         except ExplorerError as exc:
+            if not allow_fallback:
+                console.print(
+                    f"[{ERR}]Explorer lookup failed:[/{ERR}] {exc}. "
+                    "Re-run with --allow-fallback to continue with deterministic fallback output."
+                )
+                raise typer.Exit(code=2) from exc
             context["explorer_error"] = str(exc)
 
     if sandbox_script:
@@ -1587,16 +1716,103 @@ def agent_run(
             _json.dumps(context, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
+    def _build_agent_fallback_answer(prompt_text: str, ctx: dict[str, object], reason: str) -> str:
+        findings = []
+        local = ctx.get("local_analysis")
+        if isinstance(local, dict):
+            raw_findings = local.get("findings")
+            if isinstance(raw_findings, list):
+                findings = [f for f in raw_findings if isinstance(f, dict)]
+
+        def _sev_rank(name: str) -> int:
+            return {
+                "CRITICAL": 5,
+                "HIGH": 4,
+                "MEDIUM": 3,
+                "LOW": 2,
+                "INFO": 1,
+            }.get(name.upper(), 0)
+
+        findings_sorted = sorted(
+            findings,
+            key=lambda f: (
+                -_sev_rank(str(f.get("severity", ""))),
+                str(f.get("line") or ""),
+            ),
+        )
+
+        risk_lines: list[str] = []
+        for item in findings_sorted[:5]:
+            risk_lines.append(
+                "- "
+                + f"[{item.get('severity', 'UNKNOWN')}] {item.get('detector', 'detector')}"
+                + f" at line {item.get('line', '?')}: {item.get('title', '')}"
+            )
+        if not risk_lines:
+            risk_lines.append("- No local findings were available in context.")
+
+        action_lines = [
+            "1. Address all CRITICAL/HIGH findings first (especially reentrancy/CEI violations).",
+            "2. Re-run: `vyper-guard analyze <file> --ai --format json` after each patch.",
+            "3. Use `--fix --fix-dry-run` to preview deterministic remediation candidates.",
+            "4. Validate with tests and deployment simulation before production rollout.",
+        ]
+
+        validation_lines = [
+            "- Run static scan with threshold gates (CI mode).",
+            "- Re-check graph metrics: `vyper-guard stats <file> --graph`.",
+            "- Confirm no new HIGH/CRITICAL findings in final report.",
+        ]
+
+        return "\n".join(
+            [
+                "Agent Fallback Response",
+                "",
+                f"Prompt: {prompt_text}",
+                "",
+                f"AI request was unavailable: {reason}",
+                "A deterministic fallback summary is provided below.",
+                "",
+                "risk_summary",
+                *risk_lines,
+                "",
+                "prioritized_actions",
+                *action_lines,
+                "",
+                "validation_steps",
+                *validation_lines,
+            ]
+        )
+
+    def _normalize_agent_answer_plain_text(text: str) -> str:
+        """Normalize markdown-heavy model output into plain terminal text."""
+        out = text.replace("**", "").replace("`", "")
+        out = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", out)
+        out = re.sub(r"(?m)^\s*[-*]\s+", "- ", out)
+        out = re.sub(r"\n{3,}", "\n\n", out).strip()
+        return out
+
     try:
         answer = SecurityAgent(
             api_key=resolved_key,
             model=resolved_model,
             base_url=resolved_base,
-            memory=AgentMemory(resolved_memory),
+            provider=resolved_provider,
+            memory=AgentMemory(resolved_memory, max_entries=resolved_memory_max_entries),
         ).ask(prompt, context=context)
     except AgentError as exc:
-        console.print(f"[{ERR}]Agent execution failed:[/{ERR}] {exc}")
-        raise typer.Exit(code=2) from exc
+        if not allow_fallback:
+            console.print(
+                f"[{ERR}]Agent LLM request failed:[/{ERR}] {exc}. "
+                "Re-run with --allow-fallback to return deterministic fallback output."
+            )
+            raise typer.Exit(code=2) from exc
+        console.print(
+            f"[{WARN}]Agent LLM unavailable:[/{WARN}] {exc} — returning deterministic fallback response (--allow-fallback)."
+        )
+        answer = _build_agent_fallback_answer(prompt, context, str(exc))
+
+    answer = _normalize_agent_answer_plain_text(answer)
 
     if save_output:
         save_output.parent.mkdir(parents=True, exist_ok=True)
@@ -1616,7 +1832,7 @@ def agent_memory(
 
     cfg = load_config(None)
     path = memory_file or Path(cfg.llm.memory_file)
-    mem = AgentMemory(path)
+    mem = AgentMemory(path, max_entries=cfg.llm.memory_max_entries)
 
     op = action.strip().lower()
     if op == "tail":
@@ -1892,20 +2108,8 @@ def _print_rich_report(report: AnalysisReport, elapsed_ms: float = 0.0) -> None:
     if report.vyper_version:
         meta_table.add_row("🐍 Vyper Version", report.vyper_version)
 
-    # Count functions and LOC
-    try:
-        from guardian.analyzer.ast_parser import parse_vyper_source
-        from guardian.utils.helpers import load_vyper_source
-
-        source = load_vyper_source(report.file_path)
-        contract = parse_vyper_source(source, report.file_path)
-        loc = sum(1 for ln in contract.lines if ln.strip() and not ln.strip().startswith("#"))
-        meta_table.add_row("📏 Lines of Code", f"{loc:,}")
-        meta_table.add_row("🔍 Functions", str(len(contract.functions)))
-        meta_table.add_row("📊 State Variables", str(len(contract.state_variables)))
-        meta_table.add_row("📢 Events", str(len(contract.events)))
-    except Exception:
-        meta_table.add_row("📏 Lines of Code", "n/a")
+    # Avoid re-reading/parsing from disk during render to prevent TOCTOU mismatch.
+    meta_table.add_row("📏 Lines of Code", "n/a")
 
     meta_table.add_row("🔧 Detectors Run", str(len(report.detectors_run)))
     if elapsed_ms > 0:
@@ -2104,13 +2308,46 @@ def _print_ai_triage_section(report: AnalysisReport) -> None:
 
     policy_version = report.ai_triage_policy.get("policy_version", "unknown")
     policy_status = report.ai_triage_policy.get("status", "unknown")
+    deterministic_mode = bool(report.ai_triage_policy.get("deterministic", True))
+    mode_label = "deterministic" if deterministic_mode else "llm-assisted"
     console.print(
-        f"[dim]Policy: v{policy_version} ({policy_status}) • deterministic advisory metadata[/dim]"
+        f"[dim]Policy: v{policy_version} ({policy_status}) • {mode_label} advisory metadata[/dim]"
     )
+    scoring_versions = {
+        str(item.get("scoring_rationale", {}).get("version", "")).strip()
+        for item in report.ai_triage
+    }
+    scoring_versions = {v for v in scoring_versions if v}
+    if scoring_versions:
+        ordered_versions = ", ".join(sorted(scoring_versions))
+        console.print(f"[dim]Scoring profile: {ordered_versions}[/dim]")
     policy_warnings = report.ai_triage_policy.get("warnings", [])
     if isinstance(policy_warnings, list):
         for w in policy_warnings:
             console.print(f"[{WARN}]Policy warning:[/{WARN}] {w}")
+    console.print()
+
+    console.print("[bold]LLM Summary[/bold]")
+    top_items = sorted(
+        report.ai_triage,
+        key=lambda item: int(item.get("priority_rank", 9999) or 9999),
+    )[:3]
+    if top_items:
+        for item in top_items:
+            rank = item.get("priority_rank", "—")
+            detector = item.get("detector", "—")
+            bucket = item.get("triage_bucket", "—")
+            conf = item.get("confidence", "—")
+            reasoning = str(item.get("reasoning", "")).strip()
+            next_step = str(item.get("suggested_next_step", "")).strip()
+            line = f"{rank}. {detector} ({bucket}) confidence={conf}."
+            if reasoning:
+                line += f" {reasoning}"
+            if next_step:
+                line += f" Next: {next_step}"
+            console.print(f"  {line}")
+    else:
+        console.print("  No triage items available.")
     console.print()
 
     triage_table = Table(
@@ -2413,8 +2650,35 @@ def _run_fix_mode(
             remediation_report["post_fix_analysis"] = post_fix_payload
         return remediation_report
 
-    # Write to .fixed.vy file
     fixed_path = file_path.with_suffix(".fixed.vy")
+    try:
+        write_fixed = typer.confirm(
+            f"\n  Write patched artifact ({fixed_path.name})?",
+            default=False,
+        )
+    except (EOFError, KeyboardInterrupt):
+        write_fixed = False
+
+    if not write_fixed:
+        con.print(f"  [{WARN}]Skipped:[/{WARN}] no patched file was written.")
+        con.print()
+        remediation_report["summary"] = {
+            "generated": len(results),
+            "applied": len(applied),
+            "not_applied": len(skipped),
+            "skipped_by_tier": len(skipped_by_tier),
+        }
+        remediation_report["artifact"] = {
+            "fixed_file": None,
+            "original_overwritten": False,
+            "backup_file": None,
+            "write_declined": True,
+        }
+        if post_fix_payload is not None:
+            remediation_report["post_fix_analysis"] = post_fix_payload
+        return remediation_report
+
+    # Write to .fixed.vy file
     fixed_path.write_text(patched, encoding="utf-8")
     con.print(f"  [{OK}]✅  Patched contract written to:[/{OK}] [bold]{fixed_path}[/bold]")
 
@@ -2427,7 +2691,21 @@ def _run_fix_mode(
     except (EOFError, KeyboardInterrupt):
         overwrite = False
 
+    backup_path: Path | None = None
     if overwrite:
+        backup_candidate = file_path.with_suffix(file_path.suffix + ".bak")
+        if backup_candidate.exists():
+            i = 1
+            while True:
+                alt = file_path.with_suffix(file_path.suffix + f".bak.{i}")
+                if not alt.exists():
+                    backup_candidate = alt
+                    break
+                i += 1
+        backup_candidate.write_text(source, encoding="utf-8")
+        backup_path = backup_candidate
+        con.print(f"  [{OK}]Backup created:[/{OK}] [bold]{backup_path}[/bold]")
+
         file_path.write_text(patched, encoding="utf-8")
         con.print(f"  [{OK}]✅  Original file updated:[/{OK}] [bold]{file_path}[/bold]")
         if fixed_path.exists():
@@ -2445,8 +2723,10 @@ def _run_fix_mode(
         "skipped_by_tier": len(skipped_by_tier),
     }
     remediation_report["artifact"] = {
-        "fixed_file": str(fixed_path),
+        "fixed_file": str(fixed_path) if fixed_path.exists() else None,
         "original_overwritten": overwrite,
+        "backup_file": str(backup_path) if backup_path else None,
+        "write_declined": False,
     }
     if post_fix_payload is not None:
         remediation_report["post_fix_analysis"] = post_fix_payload
@@ -3779,12 +4059,22 @@ def diff(
     console.print(comp_table)
     console.print()
 
-    # ── New findings in B ──
-    names_a = {(f.detector_name, f.line_number) for f in report_a.findings}
-    new_in_b = [f for f in report_b.findings if (f.detector_name, f.line_number) not in names_a]
+    # ── New / fixed findings ──
+    # Use a content-based key instead of line number only to reduce
+    # false churn from formatting-driven line shifts.
+    def _diff_key(finding: DetectorResult) -> tuple[str, str, str, str]:
+        return (
+            finding.detector_name,
+            finding.vulnerability_type.value,
+            finding.severity.value,
+            finding.title.strip().lower(),
+        )
 
-    names_b = {(f.detector_name, f.line_number) for f in report_b.findings}
-    fixed_in_b = [f for f in report_a.findings if (f.detector_name, f.line_number) not in names_b]
+    keys_a = {_diff_key(f) for f in report_a.findings}
+    new_in_b = [f for f in report_b.findings if _diff_key(f) not in keys_a]
+
+    keys_b = {_diff_key(f) for f in report_b.findings}
+    fixed_in_b = [f for f in report_a.findings if _diff_key(f) not in keys_b]
 
     if fixed_in_b:
         console.print(f"  [green]✅ {len(fixed_in_b)} finding(s) fixed in {file_b.name}:[/green]")
@@ -3884,19 +4174,14 @@ llm:
     model: gpt-5
     # OpenAI-compatible API base URL
     base_url: https://api.openai.com/v1
-        console.print(
-            f"[{DIM}]Try:[/{DIM}]\n"
-            "  • Use a verified contract address\n"
-            "  • Set provider fallback explicitly: --provider etherscan,blockscout,sourcify\n"
-            "  • Specify network explicitly: --network ethereum\n"
-            "  • Configure API key if required: vyper-guard explorer config set api-key <key>"
-        )
     # Prefer setting via env: GUARDIAN_LLM_API_KEY
     api_key: null
     # Low temperature for stable security triage
     temperature: 0.1
     # Agent memory JSONL location
     memory_file: .guardian_agent_memory.jsonl
+    # Max retained entries in agent memory JSONL file
+    memory_max_entries: 2000
 
 explorer:
     provider: etherscan
@@ -3977,6 +4262,18 @@ def monitor(
         "-p",
         help="Seconds between block polls.",
     ),
+    max_backfill_blocks: int = typer.Option(
+        250,
+        "--max-backfill-blocks",
+        help="Maximum historical blocks processed per poll iteration.",
+        min=1,
+    ),
+    max_history_records: int = typer.Option(
+        50_000,
+        "--max-history-records",
+        help="Maximum in-memory transaction history records retained for analytics.",
+        min=1,
+    ),
     alert_webhook: str | None = typer.Option(
         None,
         "--alert-webhook",
@@ -4026,6 +4323,7 @@ def monitor(
             contract_address=address,
             rpc_url=rpc,
             poll_interval=poll_interval,
+            max_backfill_blocks=max_backfill_blocks,
         )
     except Web3NotAvailableError as exc:
         console.print(f"[{ERR}]{exc}[/{ERR}]")
@@ -4040,7 +4338,7 @@ def monitor(
 
     console.print(f"  [{OK}]Connected[/{OK}] to {rpc}  •  Block: {watcher.get_latest_block()}")
 
-    tx_analyzer = TxAnalyzer()
+    tx_analyzer = TxAnalyzer(max_records=max_history_records)
     alert_mgr = AlertManager(
         webhook_url=alert_webhook,
         min_severity=min_sev,
@@ -4100,6 +4398,18 @@ def baseline(
         "-d",
         help="Seconds to observe before saving the baseline.",
     ),
+    max_backfill_blocks: int = typer.Option(
+        250,
+        "--max-backfill-blocks",
+        help="Maximum historical blocks processed per poll iteration.",
+        min=1,
+    ),
+    max_history_records: int = typer.Option(
+        50_000,
+        "--max-history-records",
+        help="Maximum in-memory transaction history records retained while profiling.",
+        min=1,
+    ),
     output: Path | None = typer.Option(
         None,
         "--output",
@@ -4128,6 +4438,7 @@ def baseline(
             contract_address=address,
             rpc_url=rpc,
             poll_interval=2.0,
+            max_backfill_blocks=max_backfill_blocks,
         )
     except Web3NotAvailableError as exc:
         console.print(f"[{ERR}]{exc}[/{ERR}]")
@@ -4140,6 +4451,7 @@ def baseline(
     profiler = BaselineProfiler(
         contract_address=address,
         storage_dir=output.parent if output else None,
+        max_records=max_history_records,
     )
 
     def _on_tx(record):  # type: ignore[no-untyped-def]

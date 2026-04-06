@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -58,21 +59,31 @@ class ChainWatcher:
         contract_address: str,
         rpc_url: str,
         poll_interval: float = 2.0,
+        max_backfill_blocks: int = 250,
         on_transaction: Callable[[TransactionRecord], None] | None = None,
     ) -> None:
         self._web3_mod = _require_web3()
         web3_cls = self._web3_mod.Web3
 
-        self.contract_address = contract_address.lower()
-        self.rpc_url = rpc_url
+        normalized_address = contract_address.strip()
+        if not _is_hex_address(normalized_address):
+            raise ValueError("Invalid contract address. Expected 0x-prefixed 40-hex format.")
+
+        normalized_rpc = rpc_url.strip()
+        if not normalized_rpc.startswith(("http://", "https://", "ws://", "wss://")):
+            raise ValueError("Invalid rpc_url scheme. Use http(s):// or ws(s)://")
+
+        self.contract_address = normalized_address.lower()
+        self.rpc_url = normalized_rpc
         self.poll_interval = max(0.5, poll_interval)
+        self.max_backfill_blocks = max(1, int(max_backfill_blocks))
         self.on_transaction = on_transaction
 
         # Connect
-        if rpc_url.startswith("ws://") or rpc_url.startswith("wss://"):
-            provider = self._web3_mod.WebSocketProvider(rpc_url)
+        if normalized_rpc.startswith("ws://") or normalized_rpc.startswith("wss://"):
+            provider = self._web3_mod.WebSocketProvider(normalized_rpc)
         else:
-            provider = self._web3_mod.HTTPProvider(rpc_url)
+            provider = self._web3_mod.HTTPProvider(normalized_rpc)
         self.w3 = web3_cls(provider)
 
         self._last_block: int = 0
@@ -155,11 +166,20 @@ class ChainWatcher:
             self._last_block = latest - 1
 
         all_records: list[TransactionRecord] = []
-        for blk in range(self._last_block + 1, latest + 1):
+        start_blk = self._last_block + 1
+        end_blk = min(latest, start_blk + self.max_backfill_blocks - 1)
+        if end_blk < latest:
+            log.warning(
+                "Watcher lag detected (%d blocks behind); processing %d blocks this poll",
+                latest - self._last_block,
+                self.max_backfill_blocks,
+            )
+
+        for blk in range(start_blk, end_blk + 1):
             records = self.fetch_block_transactions(blk)
             all_records.extend(records)
 
-        self._last_block = latest
+        self._last_block = end_blk
         return all_records
 
     def run_sync(self, max_iterations: int = 0) -> None:
@@ -210,3 +230,10 @@ class ChainWatcher:
                     await asyncio.wait_for(stop_event.wait(), timeout=self.poll_interval)
         except KeyboardInterrupt:
             log.info("Async monitoring stopped by user.")
+
+
+_ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+
+
+def _is_hex_address(value: str) -> bool:
+    return bool(_ADDRESS_RE.fullmatch(value))

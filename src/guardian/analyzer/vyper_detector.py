@@ -118,11 +118,15 @@ _LIFECYCLE_NAMES: set[str] = {"__init__", "__default__"}
 
 def _find_pragma_line(contract: ContractInfo) -> tuple[int, str]:
     """Return (1-based line, source text) of the version pragma."""
-    if contract.pragma_version:
-        for i, line in enumerate(contract.lines):
-            s = line.strip()
-            if s.startswith("#") and contract.pragma_version in s:
-                return i + 1, s
+    for i, line in enumerate(contract.lines):
+        s = line.strip()
+        lowered = s.lower()
+        if not lowered.startswith("#"):
+            continue
+        if lowered.startswith("# pragma version") or lowered.startswith("#pragma version"):
+            return i + 1, s
+        if lowered.startswith("# @pragma") or lowered.startswith("# @version"):
+            return i + 1, s
     return 1, ""
 
 
@@ -134,13 +138,22 @@ def _find_pragma_line(contract: ContractInfo) -> tuple[int, str]:
 _EXTERNAL_CALL_RE = re.compile(
     r"\b(send|raw_call|create_minimal_proxy_to|create_copy_of|create_from_blueprint)\s*\("
 )
+# Interface-style external calls: IERC20(token).transfer(...)
+_INTERFACE_CALL_RE = re.compile(r"\b[A-Za-z_]\w*\s*\([^()\n]*\)\s*\.\s*[A-Za-z_]\w*\s*\(")
 # Matches state mutations (self.xxx = ..., self.xxx[key] = ..., self.xxx[k].field = ...).
 # Includes augmented assignments: +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
 _STATE_WRITE_RE = re.compile(r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*(?:(?:<<|>>|[+\-*/%&|^])?=)")
+# DynArray / mutable container operations that mutate state.
+_STATE_MUTATION_CALL_RE = re.compile(
+    r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\.(append|pop|remove|clear|extend|insert)\s*\("
+)
 # Matches event emissions (log EventName(...)).
 _LOG_RE = re.compile(r"\blog\s+\w+")
-# Access-control assertion pattern.
-_ACCESS_CONTROL_RE = re.compile(r"\b(assert|require)\s+.*\bmsg\.sender\b")
+# Access-control assertion pattern (strict owner/admin equality).
+_ACCESS_CONTROL_RE = re.compile(
+    r"\b(?:assert|require)\b\s+"
+    r"(?:msg\.sender\s*==\s*self\.[A-Za-z_]\w*|self\.[A-Za-z_]\w*\s*==\s*msg\.sender)\b"
+)
 # Timestamp usage in conditional.
 _TIMESTAMP_COND_RE = re.compile(
     r"\b(?:assert|if|elif|while)\b[^\n#]*\bblock\.timestamp\b"
@@ -171,9 +184,25 @@ def _strip_inline_comment(line: str) -> str:
 
 # Strict owner-gate: msg.sender == self.<owner> (NOT balance lookups).
 _STRICT_ACL_RE = re.compile(
-    r"\b(assert|require)\s+msg\.sender\s*==\s*self\.\w+"
-    r"|\bself\.\w+\s*==\s*msg\.sender"
+    r"\b(?:assert|require)\b\s+msg\.sender\s*==\s*self\.[A-Za-z_]\w+"
+    r"|\b(?:assert|require)\b\s+self\.[A-Za-z_]\w+\s*==\s*msg\.sender"
 )
+
+
+def _is_external_call_line(line: str) -> bool:
+    """Return True if *line* looks like an external interaction."""
+    clean = _strip_inline_comment(line).strip()
+    if not clean or clean.startswith("log "):
+        return False
+    return bool(_EXTERNAL_CALL_RE.search(clean) or _INTERFACE_CALL_RE.search(clean))
+
+
+def _is_state_write_line(line: str) -> bool:
+    """Return True if *line* mutates contract state."""
+    clean = _strip_inline_comment(line).strip()
+    if not clean:
+        return False
+    return bool(_STATE_WRITE_RE.search(clean) or _STATE_MUTATION_CALL_RE.search(clean))
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +241,22 @@ class MissingNonreentrantDetector(BaseDetector):
 
             # Semantic-first gate: this detector is only relevant when a
             # function performs an external interaction and/or writes state.
-            if fn_sem.external_calls == 0 and not fn_sem.state_writes:
+            has_external_call_text = any(_is_external_call_line(line) for line in func.body_lines)
+            has_state_write_text = any(_is_state_write_line(line) for line in func.body_lines)
+            if (
+                fn_sem.external_calls == 0
+                and not fn_sem.state_writes
+                and not has_external_call_text
+                and not has_state_write_text
+            ):
+                continue
+
+            if not has_external_call_text and not has_state_write_text:
                 continue
 
             body = func.body_text
-            has_external_call = fn_sem.external_calls > 0 or bool(_EXTERNAL_CALL_RE.search(body))
-            has_state_write = bool(fn_sem.state_writes) or bool(_STATE_WRITE_RE.search(body))
+            has_external_call = fn_sem.external_calls > 0 or has_external_call_text
+            has_state_write = bool(fn_sem.state_writes) or has_state_write_text
 
             if has_external_call:
                 # CRITICAL: external call without reentrancy guard
@@ -461,9 +500,13 @@ class TimestampDependenceDetector(BaseDetector):
     SEVERITY = Severity.LOW
     VULNERABILITY_TYPE = VulnerabilityType.TIMESTAMP_DEPENDENCE
 
-    # Matches large numeric literals (>= 3600 i.e. 1 hour) that suggest
-    # a timelock delay comparison — 15-second miner manipulation is irrelevant.
-    _LARGE_DELAY_RE = re.compile(r"\b(\d+)\b")
+    # Matches large timestamp offset literals directly coupled to
+    # block.timestamp arithmetic (e.g., block.timestamp + 86400).
+    _TIMESTAMP_OFFSET_RE = re.compile(
+        r"block\.timestamp\s*[+\-]\s*(\d+)"
+        r"|(\d+)\s*[+\-]\s*block\.timestamp",
+        re.IGNORECASE,
+    )
 
     # Common timelock-related variable names
     _TIMELOCK_VAR_RE = re.compile(
@@ -473,7 +516,7 @@ class TimestampDependenceDetector(BaseDetector):
         re.IGNORECASE,
     )
 
-    def _is_timelock_context(self, line: str, func_body: str) -> bool:
+    def _is_timelock_context(self, line: str) -> bool:
         """Return True if the timestamp usage is in a timelock context.
 
         A timelock context is where:
@@ -485,10 +528,14 @@ class TimestampDependenceDetector(BaseDetector):
         if self._TIMELOCK_VAR_RE.search(line):
             return True
 
-        # Check for large numeric constants on the line (>= 1 hour)
-        for m in self._LARGE_DELAY_RE.finditer(line):
-            val = int(m.group(1))
-            if val >= 3600:  # 1 hour in seconds
+        # Check for large timestamp offsets (>= 1 hour) directly tied to
+        # block.timestamp arithmetic. Avoid broad numeric matching that can
+        # hide real issues when unrelated constants are present on the line.
+        for m in self._TIMESTAMP_OFFSET_RE.finditer(line):
+            raw = m.group(1) or m.group(2)
+            if raw is None:
+                continue
+            if int(raw) >= 3600:
                 return True
 
         # Check for self.<something>_deadline or self.<something>_delay patterns
@@ -503,12 +550,11 @@ class TimestampDependenceDetector(BaseDetector):
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         results: list[DetectorResult] = []
         for func in contract.functions:
-            body = func.body_text
             for i, line in enumerate(func.body_lines):
                 code_line = _strip_inline_comment(line)
                 if _TIMESTAMP_COND_RE.search(code_line):
                     # Skip if this is a timelock comparison
-                    if self._is_timelock_context(code_line, body):
+                    if self._is_timelock_context(code_line):
                         continue
                     abs_line = func.end_line - len(func.body_lines) + 1 + i
                     results.append(
@@ -812,7 +858,27 @@ class SendInLoopDetector(BaseDetector):
         results: list[DetectorResult] = []
         for func in contract.functions:
             fn_sem = semantic.functions.get(func.name)
-            if fn_sem is None or not fn_sem.external_calls_in_loop:
+            if fn_sem is None:
+                continue
+
+            has_loop_external_call_text = False
+            loop_stack_probe: list[int] = []
+            for probe_line in func.body_lines:
+                probe_stripped = probe_line.strip()
+                if self._LOOP_START_RE.match(probe_line.lstrip() if probe_stripped else ""):
+                    loop_stack_probe.append(len(probe_line) - len(probe_line.lstrip()))
+                    continue
+                while (
+                    loop_stack_probe
+                    and probe_stripped
+                    and (len(probe_line) - len(probe_line.lstrip()) <= loop_stack_probe[-1])
+                ):
+                    loop_stack_probe.pop()
+                if loop_stack_probe and _is_external_call_line(probe_stripped):
+                    has_loop_external_call_text = True
+                    break
+
+            if not fn_sem.external_calls_in_loop and not has_loop_external_call_text:
                 continue
 
             # Use a stack of (indent, is_small_loop) tuples
@@ -831,7 +897,7 @@ class SendInLoopDetector(BaseDetector):
                     and (len(line) - len(line.lstrip()) <= loop_stack[-1][0])
                 ):
                     loop_stack.pop()
-                if loop_stack and _EXTERNAL_CALL_RE.search(stripped):
+                if loop_stack and _is_external_call_line(stripped):
                     # If ALL enclosing loops are small-constant, skip
                     if all(is_small for _, is_small in loop_stack):
                         continue
@@ -888,30 +954,13 @@ class UncheckedSubtractionDetector(BaseDetector):
         """Return *True* when a preceding assertion on a **related** variable
         logically covers ``self.<var_name> -= <rhs>``.
 
-        Two patterns are recognised:
-        1. **Related-mapping guard** - an ``assert self.<other>[...] >= <rhs>``
-           where ``<other>`` shares a word-stem with ``<var_name>``.
-           Example: ``assert self.shares[msg.sender] >= share_amount``
-           covers ``self.total_shares -= share_amount`` because the
-           aggregate is always >= any individual entry.
-        2. **Bounded-fraction derivation** - ``<rhs>`` was computed as
+        One pattern is recognised:
+        1. **Bounded-fraction derivation** - ``<rhs>`` was computed as
            ``… * self.<var_name> / …``, so ``<rhs> <= self.<var_name>``.
         """
         preceding = body[:pos]
 
-        # --- Pattern 1: related mapping guard ---
-        # e.g. var_name="total_shares", look for assert self.shares[…] >= rhs
-        stems = {p for p in var_name.split("_") if len(p) > 2 and p not in ("total", "self")}
-        if stems:
-            related_re = re.compile(
-                r"\b(assert|require)\b.*\bself\."
-                r"(" + "|".join(re.escape(s) for s in stems) + r")\w*"
-                r"(?:\[.*?\])*\s*>=\s*" + re.escape(rhs) + r"\b"
-            )
-            if related_re.search(preceding):
-                return True
-
-        # --- Pattern 2: bounded fraction ---
+        # --- Pattern: bounded fraction ---
         # rhs was computed from  ... * self.<var_name>[…] / ...
         for fm in self._BOUNDED_FRACTION_RE.finditer(preceding):
             assigned_var = fm.group(1)
@@ -985,19 +1034,20 @@ class CEIViolationDetector(BaseDetector):
     @staticmethod
     def _state_write_after_idx(body_lines: list[str], start_idx: int) -> int | None:
         for i in range(start_idx + 1, len(body_lines)):
-            if _STATE_WRITE_RE.search(body_lines[i].strip()):
+            if _is_state_write_line(body_lines[i]):
                 return i
         return None
 
-    def _first_cei_violation(self, body_lines: list[str]) -> tuple[int, str] | None:
-        """Return the first external call that has a later state write."""
+    def _cei_violations(self, body_lines: list[str]) -> list[tuple[int, str]]:
+        """Return all external calls that have a later state write."""
+        out: list[tuple[int, str]] = []
         for i, line in enumerate(body_lines):
             stripped = _strip_inline_comment(line).strip()
-            if not _EXTERNAL_CALL_RE.search(stripped):
+            if not _is_external_call_line(stripped):
                 continue
             if self._state_write_after_idx(body_lines, i) is not None:
-                return i, stripped
-        return None
+                out.append((i, stripped))
+        return out
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         semantic = build_semantic_summary(contract)
@@ -1015,38 +1065,41 @@ class CEIViolationDetector(BaseDetector):
                 continue
             # Semantic-first gate: CEI requires both an external interaction
             # and a state mutation within the same function.
-            if fn_sem.external_calls == 0 or not fn_sem.state_writes:
+            has_external_call_text = any(_is_external_call_line(line) for line in func.body_lines)
+            has_state_write_text = any(_is_state_write_line(line) for line in func.body_lines)
+            if (fn_sem.external_calls == 0 or not fn_sem.state_writes) and not (
+                has_external_call_text and has_state_write_text
+            ):
                 continue
 
             body_lines = func.body_lines
-            first_violation = self._first_cei_violation(body_lines)
-            if not first_violation:
+            violations = self._cei_violations(body_lines)
+            if not violations:
                 continue
-
-            first_call_idx, first_call_line = first_violation
-            abs_line = func.end_line - len(func.body_lines) + 1 + first_call_idx
-            results.append(
-                self._make_result(
-                    title=f"CEI violation in {func.name}()",
-                    description=(
-                        f"``{func.name}()`` performs an external call "
-                        f"(``{first_call_line.split('(')[0].strip()}``) "
-                        f"**before** updating state. An attacker can "
-                        f"re-enter the function before the state is "
-                        f"updated. Move all state changes above the "
-                        f"external call (Checks → Effects → Interactions)."
-                    ),
-                    confidence=Confidence.HIGH,
-                    line_number=abs_line,
-                    source_snippet=_excerpt(contract, func),
-                    fix_suggestion=(
-                        "Reorder the function: perform all state updates "
-                        "(self.x = …) BEFORE any external calls "
-                        "(send / raw_call). This is the Checks-Effects-"
-                        "Interactions pattern."
-                    ),
+            for call_idx, call_line in violations:
+                abs_line = func.end_line - len(func.body_lines) + 1 + call_idx
+                results.append(
+                    self._make_result(
+                        title=f"CEI violation in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` performs an external call "
+                            f"(``{call_line.split('(')[0].strip()}``) "
+                            f"**before** updating state. An attacker can "
+                            f"re-enter the function before the state is "
+                            f"updated. Move all state changes above the "
+                            f"external call (Checks → Effects → Interactions)."
+                        ),
+                        confidence=Confidence.HIGH,
+                        line_number=abs_line,
+                        source_snippet=_excerpt(contract, func),
+                        fix_suggestion=(
+                            "Reorder the function: perform all state updates "
+                            "(self.x = …) BEFORE any external calls "
+                            "(send / raw_call / interface calls). This is the "
+                            "Checks-Effects-Interactions pattern."
+                        ),
+                    )
                 )
-            )
         return results
 
 

@@ -122,3 +122,100 @@ def test_agent_memory_tail_stats_clear_cycle() -> None:
         cleared = runner.invoke(app, ["agent-memory", "clear", "--memory-file", str(memory)])
         assert cleared.exit_code == 0
         assert not memory.exists()
+
+
+def test_agent_fails_by_default_when_llm_unavailable(monkeypatch) -> None:
+    from guardian.agents.adk import AgentError
+
+    def _fail_ask(self, prompt: str, *, context=None):
+        raise AgentError("429 Too Many Requests")
+
+    monkeypatch.setattr("guardian.agents.adk.SecurityAgent.ask", _fail_ask)
+
+    with runner.isolated_filesystem():
+        contract = Path("contract.vy")
+        contract.write_text(SAFE_SOURCE, encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "agent",
+                "Analyze this contract",
+                "--file",
+                str(contract),
+            ],
+        )
+
+        assert result.exit_code == 2
+        combined = result.stdout + result.stderr
+        assert "Agent LLM request failed" in combined
+
+
+def test_agent_returns_fallback_output_when_explicitly_allowed(monkeypatch) -> None:
+    from guardian.agents.adk import AgentError
+
+    def _fail_ask(self, prompt: str, *, context=None):
+        raise AgentError("429 Too Many Requests")
+
+    monkeypatch.setattr("guardian.agents.adk.SecurityAgent.ask", _fail_ask)
+
+    with runner.isolated_filesystem():
+        contract = Path("contract.vy")
+        contract.write_text(SAFE_SOURCE, encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "agent",
+                "Analyze this contract",
+                "--file",
+                str(contract),
+                "--allow-fallback",
+            ],
+        )
+
+        assert result.exit_code == 0
+        combined = result.stdout + result.stderr
+        assert "Agent Fallback Response" in combined
+        assert "prioritized_actions" in combined
+
+
+def test_agent_provider_override_is_forwarded(monkeypatch) -> None:
+    def _fake_ask(self, prompt: str, *, context=None):
+        assert self.provider == "gemini"
+        return "ok"
+
+    monkeypatch.setattr("guardian.agents.adk.SecurityAgent.ask", _fake_ask)
+
+    with runner.isolated_filesystem():
+        contract = Path("contract.vy")
+        contract.write_text(SAFE_SOURCE, encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "agent",
+                "Analyze this contract",
+                "--file",
+                str(contract),
+                "--provider",
+                "gemini",
+            ],
+        )
+
+        assert result.exit_code == 0
+
+
+def test_agent_memory_retention_is_bounded() -> None:
+    from guardian.agents.adk import AgentMemory
+
+    with runner.isolated_filesystem():
+        memory = AgentMemory(Path("mem.jsonl"), max_entries=2)
+        memory.append({"prompt": "a", "answer": "1"})
+        memory.append({"prompt": "b", "answer": "2"})
+        memory.append({"prompt": "c", "answer": "3"})
+
+        tail = memory.tail(10)
+        assert len(tail) == 2
+        assert tail[0]["prompt"] == "b"
+        assert tail[1]["prompt"] == "c"

@@ -6,6 +6,7 @@ It calls an OpenAI-compatible Chat Completions endpoint.
 
 from __future__ import annotations
 
+import ast
 import json
 from typing import Any
 
@@ -100,7 +101,15 @@ def _extract_json_payload(content: str) -> dict[str, Any]:
     try:
         data = json.loads(chunk)
     except json.JSONDecodeError as exc:
-        raise LLMTriageError(f"Failed to parse LLM triage JSON: {exc}") from exc
+        # Some providers occasionally return Python-literal-like objects
+        # (single quotes/trailing commas). Try a safe fallback parser.
+        try:
+            fallback = ast.literal_eval(chunk)
+        except (SyntaxError, ValueError) as fallback_exc:
+            raise LLMTriageError(f"Failed to parse LLM triage JSON: {exc}") from fallback_exc
+        if not isinstance(fallback, dict):
+            raise LLMTriageError("LLM triage payload must be a JSON object") from exc
+        data = json.loads(json.dumps(fallback, ensure_ascii=False))
 
     if not isinstance(data, dict):
         raise LLMTriageError("LLM triage payload must be a JSON object")
@@ -173,6 +182,7 @@ def apply_llm_triage(
     *,
     api_key: str,
     model: str,
+    provider: str = "openai_compatible",
     base_url: str = "https://api.openai.com/v1",
     min_severity: Severity = Severity.LOW,
     max_items: int = 50,
@@ -193,24 +203,158 @@ def apply_llm_triage(
     payload = {
         "model": model,
         "temperature": temperature,
-        "response_format": {"type": "json_object"},
         "messages": messages,
     }
 
     url = base_url.rstrip("/") + "/chat/completions"
+    provider_name = provider.strip().lower()
+    gemini_mode = provider_name in {"gemini", "google", "google_gemini"}
+    if not gemini_mode:
+        # Some OpenAI-compatible endpoints do not support response_format=json_object.
+        # Keep it for non-Gemini providers where JSON mode is commonly supported.
+        payload["response_format"] = {"type": "json_object"}
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        response.raise_for_status()
-        body = response.json()
-    except requests.RequestException as exc:
-        raise LLMTriageError(f"LLM request failed: {exc}") from exc
-    except ValueError as exc:
-        raise LLMTriageError("LLM response was not valid JSON") from exc
+    model_candidates: list[str] = [model]
+    if provider_name in {"gemini", "google", "google_gemini"}:
+        for alt in [
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-2.5-flash-lite",
+        ]:
+            if alt not in model_candidates:
+                model_candidates.append(alt)
+    elif model.startswith("gpt-5"):
+        for alt in ["gpt-4.1-mini", "gpt-4o-mini"]:
+            if alt not in model_candidates:
+                model_candidates.append(alt)
+
+    body: dict[str, Any] | None = None
+    used_model = model
+    last_error: str | None = None
+
+    base = base_url.rstrip("/")
+    if gemini_mode and base.endswith("/openai"):
+        base = base[: -len("/openai")]
+
+    for candidate_model in model_candidates:
+        payload["model"] = candidate_model
+        for attempt in range(3):
+            try:
+                if gemini_mode and not base_url.rstrip("/").endswith("/openai"):
+                    gemini_url = base + f"/models/{candidate_model}:generateContent"
+                    gemini_payload = {
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {
+                                        "text": messages[0]["content"]
+                                        + "\n\n"
+                                        + messages[1]["content"]
+                                    }
+                                ],
+                            }
+                        ],
+                        "generationConfig": {"temperature": temperature},
+                    }
+                    response = requests.post(
+                        gemini_url,
+                        headers={"Content-Type": "application/json"},
+                        params={"key": api_key},
+                        json=gemini_payload,
+                        timeout=timeout,
+                    )
+                else:
+                    response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            except requests.RequestException as exc:
+                last_error = f"network error: {exc.__class__.__name__}: {exc}"
+                if attempt < 2:
+                    import time as _time
+
+                    _time.sleep(0.8 * (2**attempt))
+                    continue
+                break
+
+            # Compatibility retry: certain OpenAI-compatible gateways reject response_format.
+            if (
+                response.status_code == 400
+                and isinstance(payload, dict)
+                and "response_format" in payload
+            ):
+                retry_payload = dict(payload)
+                retry_payload.pop("response_format", None)
+                try:
+                    response = requests.post(
+                        url, headers=headers, json=retry_payload, timeout=timeout
+                    )
+                except requests.RequestException as exc:
+                    last_error = f"network error: {exc.__class__.__name__}: {exc}"
+                    if attempt < 2:
+                        import time as _time
+
+                        _time.sleep(0.8 * (2**attempt))
+                        continue
+                    break
+
+            if 200 <= response.status_code < 300:
+                try:
+                    raw = response.json()
+                    if gemini_mode and not base_url.rstrip("/").endswith("/openai"):
+                        text = str(raw["candidates"][0]["content"]["parts"][0]["text"])
+                        body = {"choices": [{"message": {"content": text}}]}
+                    else:
+                        body = raw
+                except ValueError as exc:
+                    raise LLMTriageError("LLM response was not valid JSON") from exc
+                used_model = candidate_model
+                break
+
+            if response.status_code in {400, 401, 403, 404}:
+                snippet = (response.text or "").strip().replace("\n", " ")[:220]
+                last_error = (
+                    f"{response.status_code} {response.reason} — {snippet}"
+                    if snippet
+                    else f"{response.status_code} {response.reason}"
+                )
+                break
+
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
+                retry_after = response.headers.get("Retry-After", "").strip()
+                try:
+                    sleep_for = float(retry_after) if retry_after else (0.8 * (2**attempt))
+                except ValueError:
+                    sleep_for = 0.8 * (2**attempt)
+                import time as _time
+
+                _time.sleep(max(0.3, sleep_for))
+                continue
+
+            snippet = (response.text or "").strip().replace("\n", " ")[:220]
+            last_error = (
+                f"{response.status_code} {response.reason} — {snippet}"
+                if snippet
+                else f"{response.status_code} {response.reason}"
+            )
+            break
+
+        if body is not None:
+            break
+
+    if body is None:
+        if last_error:
+            effective_url = (
+                base + "/models/{model}:generateContent"
+                if gemini_mode and not base_url.rstrip("/").endswith("/openai")
+                else url
+            )
+            raise LLMTriageError(f"LLM request failed: {last_error} for url: {effective_url}")
+        raise LLMTriageError("LLM request failed")
 
     try:
         content = body["choices"][0]["message"]["content"]
@@ -226,8 +370,8 @@ def apply_llm_triage(
         "status": "stable",
         "deterministic": False,
         "can_override_verdict": False,
-        "provider": "openai_compatible",
-        "model": model,
+        "provider": provider_name,
+        "model": used_model,
         "deprecation": {"announced": False, "sunset_after": None},
         "warnings": [
             "LLM triage is advisory only and cannot override deterministic detector verdicts.",

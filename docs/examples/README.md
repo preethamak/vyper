@@ -12,6 +12,8 @@ vyper-guard analyze docs/examples/vulnerable_vault.vy
 vyper-guard analyze docs/examples/vulnerable_vault.vy --fix
 ```
 
+`--fix` now asks before writing `.fixed.vy` and before overwriting the original file.
+
 ### `safe_vault.vy`
 A well-written vault contract that passes all detectors with a score of **100/100 (A+)**. Shows Vyper best practices.
 

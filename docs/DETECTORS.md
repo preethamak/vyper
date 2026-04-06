@@ -4,6 +4,8 @@ Vyper Guard ships with **11 pluggable detectors** plus an always-on compiler ver
 
 All detectors include **smart false-positive suppression** to avoid flagging well-known safe patterns used in production DeFi contracts.
 
+If a detector crashes at runtime, the report now includes explicit failure metadata (`failed_detectors`, `detector_errors`) and a trust penalty is applied to the final score.
+
 ## Overview
 
 | # | Detector | Severity | Category | Smart Suppression | Auto-Fix |

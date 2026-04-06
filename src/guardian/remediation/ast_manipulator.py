@@ -40,7 +40,47 @@ class CodePatcher:
     # -- Patch registration --------------------------------------------------
 
     def add_patch(self, patch: Patch) -> None:
-        """Register a patch.  Patches can overlap — latest wins."""
+        """Register a patch.
+
+        Overlapping patches are rejected to avoid line-range corruption.
+        """
+        if patch.start_line < 1 or patch.end_line < patch.start_line:
+            raise ValueError("Invalid patch range.")
+
+        for i, existing in enumerate(self._patches):
+            overlaps = not (
+                patch.end_line < existing.start_line or patch.start_line > existing.end_line
+            )
+            if overlaps:
+                # Identical range: coalesce compatible insert-style patches.
+                if patch.start_line == existing.start_line and patch.end_line == existing.end_line:
+                    if patch.start_line == patch.end_line:
+                        base_line = self._original[patch.start_line - 1]
+                        existing_is_insert = (
+                            bool(existing.new_lines) and existing.new_lines[-1] == base_line
+                        )
+                        new_is_insert = bool(patch.new_lines) and patch.new_lines[-1] == base_line
+                        if existing_is_insert and new_is_insert:
+                            merged_prefix = list(existing.new_lines[:-1])
+                            for line in patch.new_lines[:-1]:
+                                if line not in merged_prefix:
+                                    merged_prefix.append(line)
+                            self._patches[i] = Patch(
+                                start_line=existing.start_line,
+                                end_line=existing.end_line,
+                                new_lines=[*merged_prefix, base_line],
+                                description=existing.description or patch.description,
+                            )
+                            return
+                    # Fallback for exact same range non-insert edits: latest wins.
+                    self._patches[i] = patch
+                    return
+
+                raise ValueError(
+                    "Overlapping patches are not allowed: "
+                    f"new [{patch.start_line},{patch.end_line}] conflicts with "
+                    f"existing [{existing.start_line},{existing.end_line}]"
+                )
         self._patches.append(patch)
 
     # -- High-level helpers that create patches ------------------------------
@@ -64,7 +104,7 @@ class CodePatcher:
             new_lines=[new_line, self._original[top]],
             description=f"Insert {decorator} above line {top + 1}",
         )
-        self._patches.append(patch)
+        self.add_patch(patch)
         return patch
 
     def insert_line_before(self, line_number: int, text: str) -> Patch:
@@ -78,7 +118,7 @@ class CodePatcher:
             new_lines=[new_line, self._original[idx]],
             description=f"Insert line before {line_number}",
         )
-        self._patches.append(patch)
+        self.add_patch(patch)
         return patch
 
     def insert_line_after(self, line_number: int, text: str) -> Patch:
@@ -92,7 +132,7 @@ class CodePatcher:
             new_lines=[self._original[idx], new_line],
             description=f"Insert line after {line_number}",
         )
-        self._patches.append(patch)
+        self.add_patch(patch)
         return patch
 
     def replace_lines(self, start: int, end: int, new_lines: list[str]) -> Patch:
@@ -103,7 +143,7 @@ class CodePatcher:
             new_lines=new_lines,
             description=f"Replace lines {start}-{end}",
         )
-        self._patches.append(patch)
+        self.add_patch(patch)
         return patch
 
     def swap_lines(self, line_a: int, line_b: int) -> Patch:
@@ -123,7 +163,7 @@ class CodePatcher:
             ],
             description=f"Swap lines {line_a} and {line_b}",
         )
-        self._patches.append(patch)
+        self.add_patch(patch)
         return patch
 
     # -- Application ---------------------------------------------------------

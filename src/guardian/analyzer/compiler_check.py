@@ -45,6 +45,13 @@ _KNOWN_VULNERABILITIES: list[tuple[str, str, Severity, str, str | None]] = [
     ),
 ]
 
+# Historical exact versions associated with nonreentrant lock regressions.
+_NONREENTRANT_REGRESSION_VERSIONS: set[tuple[int, int, int]] = {
+    (0, 2, 15),
+    (0, 2, 16),
+    (0, 3, 0),
+}
+
 
 def _parse_version(version_str: str) -> tuple[int, ...] | None:
     """Extract a (major, minor, patch) tuple from a pragma string.
@@ -68,11 +75,15 @@ def _version_lt(version: tuple[int, ...], target_str: str) -> bool:
 
 def _find_pragma_source(contract: ContractInfo) -> tuple[int, str]:
     """Return (1-based line number, actual source text) of the version pragma."""
-    if contract.pragma_version:
-        for i, line in enumerate(contract.lines):
-            s = line.strip()
-            if s.startswith("#") and contract.pragma_version in s:
-                return i + 1, s
+    for i, line in enumerate(contract.lines):
+        s = line.strip()
+        lowered = s.lower()
+        if not lowered.startswith("#"):
+            continue
+        if lowered.startswith("# pragma version") or lowered.startswith("#pragma version"):
+            return i + 1, s
+        if lowered.startswith("# @pragma") or lowered.startswith("# @version"):
+            return i + 1, s
     return 1, ""
 
 
@@ -146,6 +157,34 @@ def check_compiler_version(contract: ContractInfo) -> list[DetectorResult]:
         return results
 
     pragma_lineno, pragma_text = _find_pragma_source(contract)
+
+    if parsed in _NONREENTRANT_REGRESSION_VERSIONS:
+        results.append(
+            DetectorResult(
+                detector_name="compiler_version_check",
+                severity=Severity.HIGH,
+                confidence=Confidence.HIGH,
+                vulnerability_type=VulnerabilityType.COMPILER_BUG,
+                title="Vulnerable compiler version (historical lock regression)",
+                description=(
+                    "This pinned Vyper version is in a historically vulnerable set "
+                    "associated with nonreentrant lock regressions."
+                ),
+                line_number=pragma_lineno,
+                source_snippet=pragma_text or None,
+                fix_suggestion="# pragma version ^0.4.0",
+                why_flagged=(
+                    f"Pragma version `{contract.pragma_version}` matches a known vulnerable "
+                    "historical compiler release."
+                ),
+                evidence=[
+                    "advisory:historical-nonreentrant-lock-regression",
+                    f"pragma:{contract.pragma_version}",
+                    f"line:{pragma_lineno}",
+                ],
+                why_not_suppressed="Exact vulnerable compiler version match.",
+            )
+        )
 
     for desc, affected_range, severity, advisory, pattern_check_name in _KNOWN_VULNERABILITIES:
         # ``affected_range`` is always in the form ``<X.Y.Z``.

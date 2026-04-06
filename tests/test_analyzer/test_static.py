@@ -79,6 +79,50 @@ class TestParseVyperSource:
         body_text = withdraw.body_text
         assert "send(" in body_text
 
+    def test_parses_long_multiline_function_signature(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def huge(
+    a1: uint256,
+    a2: uint256,
+    a3: uint256,
+    a4: uint256,
+    a5: uint256,
+    a6: uint256,
+    a7: uint256,
+    a8: uint256,
+    a9: uint256,
+    a10: uint256,
+    a11: uint256,
+    a12: uint256,
+    a13: uint256,
+    a14: uint256,
+    a15: uint256,
+    a16: uint256,
+) -> uint256:
+    return a1 + a16
+"""
+        contract = parse_vyper_source(source)
+        names = [f.name for f in contract.functions]
+        assert "huge" in names
+
+    def test_skips_single_quote_docstring_block(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+'''
+@notice This block should be ignored by parser
+owner: public(address)
+'''
+
+real_owner: public(address)
+"""
+        contract = parse_vyper_source(source)
+        var_names = [v.name for v in contract.state_variables]
+        assert "owner" not in var_names
+        assert "real_owner" in var_names
+
 
 # -------------------------------------------------------------------------
 # compiler_check tests

@@ -28,6 +28,20 @@ _GRADE_EMOJI: dict[str, str] = {
 }
 
 
+def _prepare_output_path(output_path: str | Path) -> Path:
+    path = Path(output_path).expanduser()
+    if path.exists():
+        if path.is_symlink():
+            raise ValueError(f"Refusing to write through symlink: {path}")
+        if not path.is_file():
+            raise ValueError(f"Refusing to write to non-file path: {path}")
+    parent = path.parent
+    if parent.exists() and parent.is_symlink():
+        raise ValueError(f"Refusing to write into symlink directory: {parent}")
+    parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def export_markdown(report: AnalysisReport, output_path: str | Path | None = None) -> str:
     """Render the report as Markdown.
 
@@ -52,8 +66,23 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
     w(f"| **Security Score** | **{report.security_score}/100** |")
     w(f"| **Grade** | {grade_emoji} **{report.grade.value}** — {report.grade.label} |")
     w(f"| **Detectors Run** | {len(report.detectors_run)} |")
+    if report.failed_detectors:
+        w(f"| **Failed Detectors** | {len(report.failed_detectors)} |")
     w(f"| **Tool Version** | `vyper-guard v{__version__}` |")
     w("")
+
+    if report.failed_detectors:
+        w("## ⚠️ Detector Runtime Failures")
+        w("")
+        w(
+            "> One or more detectors crashed during analysis. Results may be incomplete and should be "
+            "treated as degraded until failures are resolved."
+        )
+        w("")
+        for name in report.failed_detectors:
+            err = report.detector_errors.get(name, "unknown error")
+            w(f"- `{name}`: {err}")
+        w("")
 
     # Score bar (text-based for Markdown)
     filled = max(0, min(20, int(report.security_score / 5)))
@@ -202,8 +231,7 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
     text = "\n".join(lines)
 
     if output_path:
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = _prepare_output_path(output_path)
         path.write_text(text, encoding="utf-8")
 
     return text

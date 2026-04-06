@@ -57,3 +57,16 @@ vscode-extension/out/
 # Logs
 *.log
 guardian.log
+artifacts/
+
+# Local user/runtime secrets
+.guardianrc
+.guardian_agent_memory.jsonl
+
+# Generated stats artifacts
+*.stats.html
+*.stats.json
+
+# Generated ad-hoc reports/scratch files
+test_contracts/report*.md
+tests/test_analyzer/# Plan:*.md

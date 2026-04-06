@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from guardian import __version__
@@ -161,3 +163,84 @@ def test_markdown_ai_triage_deprecated_section_matches_golden_contract() -> None
     expected = (GOLDEN / "report.ai_triage.section.deprecated.md").read_text(encoding="utf-8")
 
     assert triage_section == expected
+
+
+def test_json_export_includes_detector_failures_when_present() -> None:
+    report = _sample_report()
+    report.failed_detectors = ["unsafe_raw_call"]
+    report.detector_errors = {"unsafe_raw_call": "timeout"}
+
+    payload = json.loads(export_json(report))
+
+    assert payload["failed_detectors"] == ["unsafe_raw_call"]
+    assert payload["detector_errors"]["unsafe_raw_call"] == "timeout"
+
+
+def test_markdown_export_mentions_detector_failures_when_present() -> None:
+    report = _sample_report()
+    report.failed_detectors = ["unsafe_raw_call"]
+    report.detector_errors = {"unsafe_raw_call": "timeout"}
+
+    text = export_markdown(report)
+
+    assert "## ⚠️ Detector Runtime Failures" in text
+    assert "unsafe_raw_call" in text
+    assert "timeout" in text
+
+
+def test_terminal_formatter_mentions_detector_failures_when_present() -> None:
+    report = _sample_report()
+    report.failed_detectors = ["unsafe_raw_call"]
+    report.detector_errors = {"unsafe_raw_call": "timeout"}
+
+    console = Console(record=True, width=100, force_terminal=False, color_system=None)
+    print_report(report, console=console)
+
+    text = console.export_text()
+    assert "Detector failures:" in text
+    assert "unsafe_raw_call" in text
+    assert "Score trust: DEGRADED" in text
+
+
+def test_fingerprint_stable_when_line_moves() -> None:
+    r1 = _sample_report()
+    r2 = _sample_report()
+    # Simulate same finding moving by formatting-only line offset.
+    r2.findings[0].line_number = (r1.findings[0].line_number or 0) + 7
+
+    p1 = json.loads(export_json(r1))
+    p2 = json.loads(export_json(r2))
+
+    assert p1["findings"][0]["fingerprint"] == p2["findings"][0]["fingerprint"]
+
+
+def test_export_json_refuses_symlink_target(tmp_path: Path) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlink not supported")
+
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    link = tmp_path / "link.json"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation not permitted")
+
+    with pytest.raises(ValueError, match="symlink"):
+        export_json(_sample_report(), link)
+
+
+def test_export_markdown_refuses_symlink_target(tmp_path: Path) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlink not supported")
+
+    target = tmp_path / "target.md"
+    target.write_text("", encoding="utf-8")
+    link = tmp_path / "link.md"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation not permitted")
+
+    with pytest.raises(ValueError, match="symlink"):
+        export_markdown(_sample_report(), link)

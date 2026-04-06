@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,8 +20,35 @@ from guardian.models import AnalysisReport
 
 def _fingerprint(finding_dict: dict[str, Any]) -> str:
     """Compute a stable fingerprint for a finding (for dedup / baseline diffing)."""
-    key = f"{finding_dict['detector']}:{finding_dict['title']}:{finding_dict['line_number']}"
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    def _norm(value: object) -> str:
+        text = str(value or "").strip().lower()
+        return re.sub(r"\s+", " ", text)
+
+    key = "|".join(
+        [
+            _norm(finding_dict.get("detector")),
+            _norm(finding_dict.get("vulnerability_type")),
+            _norm(finding_dict.get("severity")),
+            _norm(finding_dict.get("title")),
+            _norm(finding_dict.get("description")),
+        ]
+    )
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _prepare_output_path(output_path: str | Path) -> Path:
+    path = Path(output_path).expanduser()
+    if path.exists():
+        if path.is_symlink():
+            raise ValueError(f"Refusing to write through symlink: {path}")
+        if not path.is_file():
+            raise ValueError(f"Refusing to write to non-file path: {path}")
+    parent = path.parent
+    if parent.exists() and parent.is_symlink():
+        raise ValueError(f"Refusing to write into symlink directory: {parent}")
+    parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
@@ -79,6 +107,11 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
         "detectors_run": report.detectors_run,
     }
 
+    if report.failed_detectors:
+        payload["failed_detectors"] = report.failed_detectors
+    if report.detector_errors:
+        payload["detector_errors"] = report.detector_errors
+
     if report.ai_triage:
         payload["ai_triage"] = report.ai_triage
     if report.ai_triage_policy:
@@ -99,8 +132,7 @@ def export_json(report: AnalysisReport, output_path: str | Path | None = None) -
     text = json.dumps(data, indent=2, ensure_ascii=False)
 
     if output_path:
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = _prepare_output_path(output_path)
         path.write_text(text, encoding="utf-8")
 
     return text

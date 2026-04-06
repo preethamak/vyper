@@ -22,10 +22,12 @@ from guardian.analyzer.semantic import build_semantic_summary
 from guardian.analyzer.vyper_detector import ALL_DETECTORS, DETECTOR_MAP, BaseDetector
 from guardian.models import (
     AnalysisReport,
+    Confidence,
     ContractInfo,
     DetectorResult,
     SecurityGrade,
     Severity,
+    VulnerabilityType,
 )
 from guardian.utils.helpers import load_vyper_source
 from guardian.utils.logger import get_logger
@@ -84,6 +86,8 @@ class StaticAnalyzer:
         """Run all detectors against an already-parsed ``ContractInfo``."""
         all_findings: list[DetectorResult] = []
         detector_names_run: list[str] = []
+        failed_detectors: list[str] = []
+        detector_errors: dict[str, str] = {}
 
         # 1. Compiler-version check (always runs).
         version_findings = check_compiler_version(contract)
@@ -99,6 +103,31 @@ class StaticAnalyzer:
                 all_findings.extend(findings)
             except Exception as exc:
                 log.warning("Detector %s failed: %s", detector.NAME, exc)
+                failed_detectors.append(detector.NAME)
+                detector_errors[detector.NAME] = str(exc)
+                all_findings.append(
+                    DetectorResult(
+                        detector_name="detector_runtime_failure",
+                        severity=Severity.CRITICAL,
+                        confidence=Confidence.HIGH,
+                        vulnerability_type=VulnerabilityType.CODE_QUALITY,
+                        title=f"Detector execution failed: {detector.NAME}",
+                        description=(
+                            f"Detector ``{detector.NAME}`` crashed during analysis. "
+                            "Results may be incomplete and should not be treated as fully trusted "
+                            "until the detector failure is resolved."
+                        ),
+                        line_number=None,
+                        source_snippet=None,
+                        fix_suggestion=(
+                            "Re-run with --verbose and inspect logs. Consider reporting this as a bug "
+                            "with a minimal reproducer contract."
+                        ),
+                        why_flagged="A detector crashed; this analysis is partially degraded.",
+                        evidence=[f"detector={detector.NAME}", f"error={exc}"],
+                        why_not_suppressed="Detector runtime failures are never suppressed.",
+                    )
+                )
 
         # 3. Filter by severity threshold.
         severity_order = list(Severity)
@@ -109,6 +138,7 @@ class StaticAnalyzer:
 
         # 4. Compute score.
         score = _compute_score(filtered)
+        score = _apply_failed_detector_penalty(score, len(failed_detectors))
         grade = SecurityGrade.from_score(score)
 
         return AnalysisReport(
@@ -116,6 +146,8 @@ class StaticAnalyzer:
             vyper_version=contract.pragma_version,
             findings=filtered,
             detectors_run=detector_names_run,
+            failed_detectors=failed_detectors,
+            detector_errors=detector_errors,
             security_score=score,
             grade=grade,
         )
@@ -155,6 +187,12 @@ _TIER_CAPS: dict[Severity, int] = {
     Severity.INFO: 5,
 }
 
+# Additional trust penalty when detector execution failed.
+# This applies on top of finding-based deductions so reports with
+# runtime detector crashes cannot appear deceptively healthy.
+_FAILED_DETECTOR_PENALTY = 10
+_FAILED_DETECTOR_PENALTY_CAP = 30
+
 
 def _compute_score(findings: list[DetectorResult]) -> int:
     """Compute a 0-100 security score from findings.
@@ -174,6 +212,17 @@ def _compute_score(findings: list[DetectorResult]) -> int:
         total_deduction += min(raw, _TIER_CAPS[sev])
 
     return max(0, 100 - total_deduction)
+
+
+def _apply_failed_detector_penalty(score: int, failed_count: int) -> int:
+    """Reduce score for detector runtime failures.
+
+    This is a trust/degradation penalty independent of vulnerability findings.
+    """
+    if failed_count <= 0:
+        return score
+    penalty = min(_FAILED_DETECTOR_PENALTY_CAP, failed_count * _FAILED_DETECTOR_PENALTY)
+    return max(0, score - penalty)
 
 
 def _attach_semantic_context(findings: list[DetectorResult], contract: ContractInfo) -> None:

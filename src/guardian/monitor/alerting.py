@@ -17,7 +17,9 @@ Cross-platform notes
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import smtplib
 import time
 import urllib.parse
@@ -65,12 +67,14 @@ class AlertManager:
         min_severity: AlertSeverity = AlertSeverity.INFO,
         rate_limit_secs: float = 60.0,
         enable_console: bool = True,
+        allow_private_webhooks: bool = False,
     ) -> None:
         self.webhook_url = webhook_url
         self.email_config = email_config or {}
         self.min_severity = min_severity
         self.rate_limit_secs = rate_limit_secs
         self.enable_console = enable_console
+        self.allow_private_webhooks = allow_private_webhooks
 
         # Dedup / rate-limit: key → last-dispatch epoch
         self._last_dispatch: dict[str, float] = defaultdict(float)
@@ -157,8 +161,20 @@ class AlertManager:
     def _dispatch_webhook(self, alert: MonitorAlert) -> None:
         url = str(self.webhook_url or "").strip()
         parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
+        if parsed.scheme != "https":
             log.error("Webhook dispatch blocked: unsupported URL scheme '%s'", parsed.scheme or "")
+            return
+        if not parsed.netloc:
+            log.error("Webhook dispatch blocked: invalid URL (missing host)")
+            return
+
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            log.error("Webhook dispatch blocked: invalid URL host")
+            return
+
+        if not self.allow_private_webhooks and _is_private_or_local_host(host):
+            log.error("Webhook dispatch blocked: private/local host '%s'", host)
             return
 
         payload = {
@@ -201,9 +217,22 @@ class AlertManager:
         smtp_port = int(self.email_config.get("smtp_port", 587))  # type: ignore[arg-type]
         from_addr = str(self.email_config.get("from_addr", "guardian@localhost"))
         to_addrs: list[str] = list(self.email_config.get("to_addrs", []))  # type: ignore[arg-type]
-        username = self.email_config.get("username")
-        password = self.email_config.get("password")
+        username = _resolve_secret(
+            direct=self.email_config.get("username"),
+            env_name=self.email_config.get("username_env"),
+        )
+        password = _resolve_secret(
+            direct=self.email_config.get("password"),
+            env_name=self.email_config.get("password_env"),
+        )
         use_tls = bool(self.email_config.get("use_tls", True))
+
+        if isinstance(self.email_config.get("password"), str) and not self.email_config.get(
+            "password_env"
+        ):
+            log.warning(
+                "Email config uses plaintext password; prefer password_env or env:VAR secret references."
+            )
 
         if not to_addrs:
             log.warning("Email dispatch skipped — no 'to_addrs' configured.")
@@ -227,8 +256,61 @@ class AlertManager:
                 if use_tls:
                     srv.starttls()
                 if username and password:
-                    srv.login(str(username), str(password))
+                    srv.login(username, password)
                 srv.send_message(msg)
             log.info("Email alert sent to %s", to_addrs)
         except Exception as exc:
             log.error("Email dispatch failed: %s", exc)
+
+
+def _is_private_or_local_host(host: str) -> bool:
+    """Return True when host resolves to local/private address patterns.
+
+    This is a conservative SSRF guard for webhook egress.
+    """
+    lowered = host.lower().strip()
+    if lowered in {"localhost", "localhost.localdomain"}:
+        return True
+    if lowered.endswith(".local"):
+        return True
+
+    try:
+        ip = ipaddress.ip_address(lowered)
+    except ValueError:
+        # Domain-name heuristics for common local/private targets.
+        return lowered.endswith(".internal")
+
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _resolve_secret(*, direct: object, env_name: object) -> str | None:
+    """Resolve credential values from explicit config or environment.
+
+    Supported patterns:
+    - direct='env:MY_VAR'
+    - direct='${MY_VAR}'
+    - env_name='MY_VAR'
+    - direct plain value (fallback)
+    """
+    if isinstance(env_name, str) and env_name.strip():
+        return os.getenv(env_name.strip())
+
+    if not isinstance(direct, str):
+        return None
+
+    value = direct.strip()
+    if not value:
+        return None
+
+    if value.startswith("env:"):
+        return os.getenv(value[4:].strip())
+    if value.startswith("${") and value.endswith("}"):
+        return os.getenv(value[2:-1].strip())
+    return value

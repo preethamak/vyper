@@ -109,3 +109,21 @@ class TestFixValidator:
         ]
         warnings = self.validator.validate(lines)
         assert warnings == []
+
+    def test_tab_indentation_warns(self) -> None:
+        lines = [
+            "@external",
+            "def foo():",
+            "\tself.x = 1",
+        ]
+        warnings = self.validator.validate(lines)
+        assert any("tab indentation" in w for w in warnings)
+
+    def test_malformed_decorator_warns(self) -> None:
+        lines = [
+            "@external(",
+            "def foo():",
+            "    pass",
+        ]
+        warnings = self.validator.validate(lines)
+        assert any("malformed decorator" in w for w in warnings)
