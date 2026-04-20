@@ -14,6 +14,7 @@ import re
 import sys
 import time as _time
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -33,10 +34,20 @@ from guardian.analyzer.ai_triage import apply_ai_triage
 from guardian.analyzer.benchmark import run_corpus_benchmark
 from guardian.analyzer.static import StaticAnalyzer
 from guardian.analyzer.vyper_detector import list_detectors as _list_detectors
-from guardian.models import AnalysisReport, Confidence, DetectorResult, Severity, VulnerabilityType
+from guardian.models import (
+    AnalysisReport,
+    Confidence,
+    DetectorResult,
+    SecurityGrade,
+    Severity,
+    VulnerabilityType,
+)
 from guardian.reporting.formatter import print_report  # noqa: F401  - public API
-from guardian.reporting.json_exporter import export_json
+from guardian.reporting.html_exporter import export_html
+from guardian.reporting.json_exporter import export_json, report_to_dict
 from guardian.reporting.markdown_exporter import export_markdown
+from guardian.reporting.sarif_exporter import export_sarif, report_to_sarif_dict
+from guardian.reporting.score import score_report
 from guardian.utils.config import load_config
 from guardian.utils.helpers import FileLoadError, GuardianError
 from guardian.utils.logger import setup_logging
@@ -261,9 +272,8 @@ def _print_banner() -> None:
     console.print()
 
 
-def _print_help_screen() -> None:
-    """Show the full branded help screen when user types just `vyper-guard`."""
-    # Restore the large logo users expect on root command.
+def _print_home_screen() -> None:
+    """Show branded home screen for `vyper-guard` with key workflows and links."""
     console.print(_LOGO)
     console.print(
         f"  [bold white]v{__version__}[/bold white]  "
@@ -274,30 +284,18 @@ def _print_help_screen() -> None:
     groups = Table(show_header=True, header_style="bold bright_white", box=box.SIMPLE_HEAVY)
     groups.add_column("Workflow", style="bold bright_cyan", width=24)
     groups.add_column("Commands", style="white")
-    groups.add_row("Analyze", "analyze, scan, ast, flow, fix, diff, stats")
-    groups.add_row("Deployed Contracts", "explorer, analyze-address")
+    groups.add_row("Core Analysis", "analyze, scan, ast, flow, fix, diff")
+    groups.add_row("Reporting", "analyze --format cli|json|markdown|sarif|html")
+    groups.add_row("Contract Intelligence", "stats, explorer, analyze-address")
     groups.add_row("AI", "ai config, agent, agent-memory")
-    groups.add_row("Operations", "detectors, benchmark, init, baseline, monitor, version")
-
-    quick = Text.from_markup(
-        "[bold]Quick Start[/bold]\n\n"
-        "[dim]1)[/dim] [bold white]vyper-guard analyze contract.vy[/bold white]\n"
-        "[dim]2)[/dim] [bold white]vyper-guard analyze contract.vy --ai[/bold white]\n"
-        "[dim]3)[/dim] [bold white]vyper-guard stats contract.vy --graph[/bold white]\n"
-        "[dim]4)[/dim] [bold white]vyper-guard analyze-address 0x... --provider auto[/bold white]\n"
-        "[dim]5)[/dim] [bold white]vyper-guard analyze contract.vy -f json -o report.json[/bold white]"
-    )
+    groups.add_row("Operations", "detectors, benchmark, init, baseline, monitor, version, help")
 
     console.print(
-        Columns(
-            [
-                Panel(
-                    groups, title="[bold]Command Map[/bold]", border_style=ACCENT, box=box.ROUNDED
-                ),
-                Panel(quick, title="[bold]Examples[/bold]", border_style=ACCENT, box=box.ROUNDED),
-            ],
-            equal=True,
-            expand=True,
+        Panel(
+            groups,
+            title="[bold]Grouped Workflows[/bold]",
+            border_style=ACCENT,
+            box=box.ROUNDED,
         )
     )
     console.print()
@@ -306,8 +304,99 @@ def _print_help_screen() -> None:
             Text.from_markup(
                 "[bold white]Tips[/bold white]\n"
                 "• Use [bold]vyper-guard <command> -h[/bold] for command-specific options\n"
-                "• CLI output is on [bold]stderr[/bold], JSON/Markdown outputs stay clean on [bold]stdout[/bold]\n"
-                "• Docs: [underline]https://github.com/preethamak/vyper[/underline]"
+                "• Docs: [underline]https://deepwiki.com/preethamak/vyper[/underline]\n"
+                "• Website: [underline]https://vyper-web.vercel.app[/underline]"
+            ),
+            border_style="dim",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
+    console.print()
+
+
+def _print_help_screen() -> None:
+    """Show the full branded help screen and command catalog."""
+    console.print(_LOGO)
+    console.print(
+        f"  [bold white]v{__version__}[/bold white]  "
+        f"[dim]|[/dim]  [dim]Vyper smart contract security toolkit[/dim]"
+    )
+    console.print()
+
+    groups = Table(show_header=True, header_style="bold bright_white", box=box.SIMPLE_HEAVY)
+    groups.add_column("Workflow", style="bold bright_cyan", width=24)
+    groups.add_column("Commands", style="white")
+    groups.add_row("Core Analysis", "analyze, scan, ast, flow, fix, diff")
+    groups.add_row("Reporting", "analyze --format cli|json|markdown|sarif|html")
+    groups.add_row("Contract Intelligence", "stats, explorer, analyze-address")
+    groups.add_row("AI", "ai config, agent, agent-memory")
+    groups.add_row("Operations", "detectors, benchmark, init, baseline, monitor, version, help")
+
+    quick = Text.from_markup(
+        "[bold]Ready-to-run Examples[/bold]\n\n"
+        "[dim]1)[/dim] [bold white]vyper-guard analyze contract.vy[/bold white]\n"
+        "[dim]2)[/dim] [bold white]vyper-guard analyze contract.vy -f html -o report.html[/bold white]\n"
+        "[dim]3)[/dim] [bold white]vyper-guard analyze contracts/ -f html -o project-report.html[/bold white]\n"
+        "[dim]4)[/dim] [bold white]vyper-guard stats contract.vy --graph[/bold white]\n"
+        "[dim]5)[/dim] [bold white]vyper-guard flow contract.vy --format mermaid[/bold white]\n"
+        "[dim]6)[/dim] [bold white]vyper-guard explorer 0x...[/bold white]\n"
+        "[dim]7)[/dim] [bold white]vyper-guard analyze-address 0x... -f json[/bold white]\n"
+        "[dim]8)[/dim] [bold white]vyper-guard help[/bold white]"
+    )
+
+    catalog = Table(show_header=True, header_style="bold bright_white", box=box.SIMPLE_HEAVY)
+    catalog.add_column("Command", style=f"bold {ACCENT}", width=24)
+    catalog.add_column("Purpose", style="white", ratio=1)
+    catalog.add_row("analyze", "Static analysis for file/directory targets")
+    catalog.add_row("scan", "Alias for analyze")
+    catalog.add_row("ast", "AST-oriented structural output")
+    catalog.add_row("flow", "Function/call-flow view")
+    catalog.add_row("fix", "Auto-remediation workflow")
+    catalog.add_row("stats", "Contract metrics + graph artifacts")
+    catalog.add_row("diff", "Security posture comparison")
+    catalog.add_row("explorer", "Fetch verified source/ABI metadata")
+    catalog.add_row("analyze-address", "Analyze verified on-chain source")
+    catalog.add_row("detectors", "List detectors with severity/category")
+    catalog.add_row("benchmark", "Detector quality benchmark")
+    catalog.add_row("baseline", "Baseline profile for monitor/anomaly")
+    catalog.add_row("monitor", "Runtime monitoring + alerts")
+    catalog.add_row("ai config", "Set/show AI provider, model, key")
+    catalog.add_row("agent", "LLM assistant with tool context")
+    catalog.add_row("agent-memory", "Agent memory management")
+
+    console.print(
+        Columns(
+            [
+                Panel(
+                    groups,
+                    title="[bold]Grouped Workflows[/bold]",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                ),
+                Panel(
+                    quick,
+                    title="[bold]Examples[/bold]",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                ),
+            ],
+            equal=True,
+            expand=True,
+        )
+    )
+    console.print()
+    console.print(
+        Panel(catalog, title="[bold]Command Catalog[/bold]", border_style=ACCENT, box=box.ROUNDED)
+    )
+    console.print()
+    console.print(
+        Panel(
+            Text.from_markup(
+                "[bold white]Tips[/bold white]\n"
+                "• Use [bold]vyper-guard <command> -h[/bold] for command-specific options\n"
+                "• Docs: [underline]https://deepwiki.com/preethamak/vyper[/underline]\n"
+                "• Website: [underline]https://vyper-web.vercel.app[/underline]"
             ),
             border_style="dim",
             box=box.ROUNDED,
@@ -342,8 +431,14 @@ def main(
 ) -> None:
     """🛡️ Vyper Guard — Vyper-native smart contract security analysis."""
     if ctx.invoked_subcommand is None:
-        _print_help_screen()
+        _print_home_screen()
         raise typer.Exit()
+
+
+@app.command(name="help")
+def help_command() -> None:
+    """Show the branded command map and quick-start examples."""
+    _print_help_screen()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -435,13 +530,28 @@ def analyze(
         None,
         "--format",
         "-f",
-        help="Output format: cli, json, markdown (default from config if set).",
+        help="Output format: cli, json, markdown, sarif, html (default from config if set).",
     ),
     output: Path | None = typer.Option(
         None,
         "--output",
         "-o",
-        help="Write report to this file (json/markdown only).",
+        help="Write report to this file (json/markdown/sarif/html).",
+    ),
+    baseline_file: Path | None = typer.Option(
+        None,
+        "--baseline-file",
+        help="Optional finding baseline JSON file (suppresses matching fingerprints).",
+    ),
+    baseline_diff: bool = typer.Option(
+        False,
+        "--baseline-diff",
+        help="Emit baseline diff metadata (new/resolved/unchanged) against --baseline-file.",
+    ),
+    update_baseline: bool = typer.Option(
+        False,
+        "--update-baseline",
+        help="Write current finding fingerprints to --baseline-file.",
     ),
     detectors: str | None = typer.Option(
         None,
@@ -533,7 +643,8 @@ def analyze(
     setup_logging(verbose)
 
     # Validate the file before doing anything else
-    _validate_contract_path(file_path)
+    if file_path.is_file():
+        _validate_contract_path(file_path)
 
     # Resolve config
     cfg = load_config(str(config) if config else None)
@@ -561,9 +672,62 @@ def analyze(
     )
 
     fmt = (format or cfg.reporting.default_format).lower()
-    if fmt not in {"cli", "json", "markdown"}:
-        console.print(f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown.[/{ERR}]")
+    if fmt not in {"cli", "json", "markdown", "sarif", "html"}:
+        console.print(
+            f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown, sarif, html.[/{ERR}]"
+        )
         raise typer.Exit(code=2)
+
+    if update_baseline and baseline_file is None:
+        console.print(f"[{ERR}]--update-baseline requires --baseline-file.[/{ERR}]")
+        raise typer.Exit(code=2)
+    if baseline_diff and baseline_file is None:
+        console.print(f"[{ERR}]--baseline-diff requires --baseline-file.[/{ERR}]")
+        raise typer.Exit(code=2)
+
+    baseline_fingerprints: set[str] = set()
+    if baseline_file is not None:
+        try:
+            baseline_fingerprints = _load_finding_baseline(baseline_file)
+        except ValueError as exc:
+            console.print(f"[{ERR}]Invalid baseline file:[/{ERR}] {exc}")
+            raise typer.Exit(code=2) from exc
+
+    if file_path.is_dir():
+        if fix or fix_dry_run or fix_report:
+            console.print(
+                f"[{ERR}]Auto-remediation is only supported for single-file analysis.[/{ERR}] "
+                "Use `vyper-guard analyze <file>.vy --fix` for remediation mode."
+            )
+            raise typer.Exit(code=2)
+
+        triage_enabled, _, _, _, _ = _resolve_ai_triage_settings(
+            cfg=cfg,
+            ai=ai,
+            ai_triage=ai_triage,
+            ai_triage_min_severity=ai_triage_min_severity,
+            ai_triage_max_items=ai_triage_max_items,
+            ai_triage_mode=ai_triage_mode,
+            ai_allow_fallback=ai_allow_fallback,
+        )
+        if triage_enabled:
+            console.print(
+                f"[{WARN}]AI triage is currently skipped in directory mode.[/{WARN}] "
+                "Run per-file analysis to include triage metadata."
+            )
+
+        _analyze_directory_target(
+            target_dir=file_path,
+            analyzer=analyzer,
+            fmt=fmt,
+            output=output,
+            ci=ci,
+            baseline_file=baseline_file,
+            baseline_fingerprints=baseline_fingerprints,
+            baseline_diff=baseline_diff,
+            update_baseline=update_baseline,
+        )
+        return
 
     def _build_runtime_fallback_report(error: Exception) -> AnalysisReport:
         return AnalysisReport(
@@ -684,13 +848,53 @@ def analyze(
                 triage_max_items=triage_max_items,
             )
 
+    raw_fingerprints = _collect_report_fingerprints(report)
+    if update_baseline and baseline_file is not None:
+        _write_finding_baseline(
+            baseline_file,
+            raw_fingerprints,
+            target=str(file_path),
+        )
+
+    if baseline_diff and baseline_file is not None:
+        baseline_diff_meta = _compute_baseline_diff(raw_fingerprints, baseline_fingerprints)
+        report.analysis_context = dict(report.analysis_context)
+        report.analysis_context["baseline_diff"] = {
+            "file": str(baseline_file),
+            **baseline_diff_meta,
+        }
+
+    findings_before_suppression = len(report.findings)
+    suppressed_count = _apply_finding_baseline(report, baseline_fingerprints)
+    if baseline_file is not None:
+        report.analysis_context = dict(report.analysis_context)
+        report.analysis_context["baseline"] = {
+            "file": str(baseline_file),
+            "entries": len(baseline_fingerprints),
+            "findings_before_suppression": findings_before_suppression,
+            "findings_suppressed": suppressed_count,
+            "findings_active": len(report.findings),
+        }
+    if suppressed_count and fmt == "cli":
+        console.print(
+            f"[{WARN}]Baseline suppression applied:[/{WARN}] {suppressed_count} finding(s) hidden."
+        )
+
     # Output
     if fmt == "json":
         text = export_json(report, output)
         if not output:
             typer.echo(text)
+    elif fmt == "sarif":
+        text = export_sarif(report, output)
+        if not output:
+            typer.echo(text)
     elif fmt == "markdown":
         text = export_markdown(report, output)
+        if not output:
+            typer.echo(text)
+    elif fmt == "html":
+        text = export_html(report, output)
         if not output:
             typer.echo(text)
     else:
@@ -731,6 +935,612 @@ def analyze(
         raise typer.Exit(code=1)
 
 
+def _summarize_reports(reports: list[AnalysisReport]) -> dict[str, int]:
+    counts = Counter(f.severity for report in reports for f in report.findings)
+    return {
+        "total": sum(len(report.findings) for report in reports),
+        "critical": counts.get(Severity.CRITICAL, 0),
+        "high": counts.get(Severity.HIGH, 0),
+        "medium": counts.get(Severity.MEDIUM, 0),
+        "low": counts.get(Severity.LOW, 0),
+        "info": counts.get(Severity.INFO, 0),
+    }
+
+
+def _load_finding_baseline(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    if not path.is_file():
+        raise ValueError(f"path is not a file: {path}")
+    try:
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"cannot parse JSON at {path}") from exc
+
+    if isinstance(payload, list):
+        return {str(item) for item in payload if isinstance(item, str)}
+    if isinstance(payload, dict):
+        fingerprints = payload.get("fingerprints")
+        if isinstance(fingerprints, list):
+            return {str(item) for item in fingerprints if isinstance(item, str)}
+    raise ValueError("expected JSON list[str] or object with 'fingerprints' list")
+
+
+def _write_finding_baseline(path: Path, fingerprints: set[str], *, target: str) -> None:
+    payload = {
+        "$schema": "vyper-guard-finding-baseline/v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "target": target,
+        "fingerprints": sorted(fingerprints),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _collect_report_fingerprints(report: AnalysisReport) -> set[str]:
+    payload = report_to_dict(report)
+    return {
+        str(f.get("fingerprint"))
+        for f in payload.get("findings", [])
+        if isinstance(f, dict) and isinstance(f.get("fingerprint"), str)
+    }
+
+
+def _apply_finding_baseline(report: AnalysisReport, baseline_fingerprints: set[str]) -> int:
+    if not baseline_fingerprints:
+        return 0
+
+    payload = report_to_dict(report)
+    findings_payload = payload.get("findings", [])
+    if not isinstance(findings_payload, list):
+        return 0
+
+    kept_findings: list[DetectorResult] = []
+    suppressed = 0
+    for finding, finding_payload in zip(report.findings, findings_payload, strict=False):
+        fp = finding_payload.get("fingerprint") if isinstance(finding_payload, dict) else None
+        if isinstance(fp, str) and fp in baseline_fingerprints:
+            suppressed += 1
+            continue
+        kept_findings.append(finding)
+
+    if suppressed:
+        report.findings = kept_findings
+        score, grade = score_report(report)
+        report.security_score = score
+        report.grade = grade
+    return suppressed
+
+
+def _compute_baseline_diff(
+    current_fingerprints: set[str], baseline_fingerprints: set[str]
+) -> dict[str, object]:
+    new_fingerprints = current_fingerprints - baseline_fingerprints
+    resolved_fingerprints = baseline_fingerprints - current_fingerprints
+    unchanged_fingerprints = current_fingerprints & baseline_fingerprints
+    return {
+        "baseline_entries": len(baseline_fingerprints),
+        "current_findings_before_suppression": len(current_fingerprints),
+        "new_count": len(new_fingerprints),
+        "resolved_count": len(resolved_fingerprints),
+        "unchanged_count": len(unchanged_fingerprints),
+        "new_fingerprints": sorted(new_fingerprints),
+        "resolved_fingerprints": sorted(resolved_fingerprints),
+    }
+
+
+def _project_markdown_report(
+    target_dir: Path,
+    reports: list[AnalysisReport],
+    elapsed_ms: float,
+    baseline_diff: dict[str, object] | None = None,
+) -> str:
+    summary = _summarize_reports(reports)
+    lines = [
+        "# Vyper Guard Project Report",
+        "",
+        f"- **Target directory:** `{target_dir}`",
+        f"- **Contracts analyzed:** `{len(reports)}`",
+        f"- **Duration:** `{elapsed_ms:.0f} ms`",
+        "",
+        "## Summary",
+        "",
+        f"- Total findings: **{summary['total']}**",
+        f"- Critical: **{summary['critical']}**",
+        f"- High: **{summary['high']}**",
+        f"- Medium: **{summary['medium']}**",
+        f"- Low: **{summary['low']}**",
+        f"- Info: **{summary['info']}**",
+        "",
+        "## Per-file Security Scores",
+        "",
+        "| File | Score | Grade | Findings |",
+        "|---|---:|:---:|---:|",
+    ]
+    for report in reports:
+        rel = Path(report.file_path)
+        lines.append(
+            f"| `{rel}` | {report.security_score} | {report.grade.value} | {len(report.findings)} |"
+        )
+
+    baseline_meta = _project_baseline_meta(reports)
+    if baseline_meta is not None:
+        lines.extend(
+            [
+                "",
+                "## Baseline Review",
+                "",
+                f"- Baseline file: `{baseline_meta['file']}`",
+                f"- Baseline entries: **{baseline_meta['entries']}**",
+                f"- Findings before suppression: **{baseline_meta['findings_before_suppression']}**",
+                f"- Findings suppressed: **{baseline_meta['findings_suppressed']}**",
+                f"- Findings active: **{baseline_meta['findings_active']}**",
+            ]
+        )
+
+    if baseline_diff is not None:
+        lines.extend(
+            [
+                "",
+                "## Baseline Diff",
+                "",
+                f"- Baseline entries: **{baseline_diff.get('baseline_entries', 0)}**",
+                f"- New findings: **{baseline_diff.get('new_count', 0)}**",
+                f"- Resolved findings: **{baseline_diff.get('resolved_count', 0)}**",
+                f"- Unchanged findings: **{baseline_diff.get('unchanged_count', 0)}**",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _project_html_report(
+    target_dir: Path,
+    reports: list[AnalysisReport],
+    elapsed_ms: float,
+    baseline_diff: dict[str, object] | None = None,
+) -> str:
+    summary = _summarize_reports(reports)
+    total_findings = max(1, summary["total"])
+
+    severity_rows = [
+        ("CRITICAL", summary["critical"], "#dc2626"),
+        ("HIGH", summary["high"], "#ea580c"),
+        ("MEDIUM", summary["medium"], "#ca8a04"),
+        ("LOW", summary["low"], "#2563eb"),
+        ("INFO", summary["info"], "#0f766e"),
+    ]
+
+    sev_bars = "".join(
+        "<div class='sev-row'>"
+        + f"<div class='label'><span class='dot' style='background:{color}'></span>{_html.escape(label)}</div>"
+        + "<div class='track'>"
+        + f"<div class='fill' style='background:{color}; width:{(count / total_findings) * 100:.2f}%;'></div>"
+        + "</div>"
+        + f"<div class='count'>{count}</div>"
+        + "</div>"
+        for label, count, color in severity_rows
+    )
+
+    per_file_rows = []
+    issue_rows = []
+    for idx, report in enumerate(reports, start=1):
+        per_file_rows.append(
+            "<tr>"
+            f"<td>{idx}</td>"
+            f"<td>{_html.escape(str(Path(report.file_path)))}</td>"
+            f"<td>{report.security_score}</td>"
+            f"<td>{_html.escape(report.grade.value)}</td>"
+            f"<td>{len(report.findings)}</td>"
+            "</tr>"
+        )
+        for finding in report.findings:
+            line = str(finding.line_number) if finding.line_number is not None else "—"
+            issue_rows.append(
+                "<tr>"
+                f"<td>{_html.escape(str(Path(report.file_path)))}</td>"
+                f"<td>{_html.escape(finding.severity.value)}</td>"
+                f"<td>{_html.escape(finding.detector_name)}</td>"
+                f"<td>{_html.escape(finding.vulnerability_type.value)}</td>"
+                f"<td>{line}</td>"
+                f"<td>{_html.escape(finding.title)}</td>"
+                f"<td>{_html.escape(finding.description)}</td>"
+                "</tr>"
+            )
+
+    if not issue_rows:
+        issue_rows.append(
+            "<tr><td colspan='7'>No vulnerabilities detected across this project scope.</td></tr>"
+        )
+
+    baseline_meta = _project_baseline_meta(reports)
+    baseline_bits: list[str] = []
+    if baseline_meta is not None:
+        baseline_bits.extend(
+            [
+                f"<li><strong>Baseline file:</strong> {_html.escape(str(baseline_meta.get('file', '')))}</li>",
+                f"<li><strong>Entries:</strong> {int(baseline_meta.get('entries', 0) or 0)}</li>",
+                f"<li><strong>Suppressed:</strong> {int(baseline_meta.get('findings_suppressed', 0) or 0)}</li>",
+                f"<li><strong>Active:</strong> {int(baseline_meta.get('findings_active', 0) or 0)}</li>",
+            ]
+        )
+    if baseline_diff is not None:
+        baseline_bits.extend(
+            [
+                f"<li><strong>New:</strong> {int(baseline_diff.get('new_count', 0) or 0)}</li>",
+                f"<li><strong>Resolved:</strong> {int(baseline_diff.get('resolved_count', 0) or 0)}</li>",
+                f"<li><strong>Unchanged:</strong> {int(baseline_diff.get('unchanged_count', 0) or 0)}</li>",
+            ]
+        )
+
+    baseline_html = (
+        "<section class='panel'><h2>Baseline Review</h2><ul>"
+        + "".join(baseline_bits)
+        + "</ul></section>"
+        if baseline_bits
+        else ""
+    )
+
+    avg_score = round(sum(r.security_score for r in reports) / max(1, len(reports)))
+
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Vyper Guard Project Security Report — {_html.escape(str(target_dir))}</title>
+    <style>
+        :root {{ --bg:#f8fafc; --surface:#ffffff; --stroke:#dbe2ea; --text:#0f172a; --muted:#475569; }}
+        * {{ box-sizing: border-box; }}
+        body {{ margin:0; background:var(--bg); color:var(--text); font-family:Inter,Segoe UI,Roboto,Arial,sans-serif; }}
+        .wrap {{ max-width:1280px; margin:0 auto; padding:24px; }}
+        .hero {{ background:linear-gradient(120deg,#0f766e 0%,#2563eb 50%,#f59e0b 115%); color:#fff; border-radius:16px; padding:22px; margin-bottom:14px; }}
+        .hero h1 {{ margin:0 0 6px 0; font-size:26px; }}
+        .hero p {{ margin:0; color:rgba(255,255,255,0.92); }}
+        .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:14px; }}
+        .card {{ background:var(--surface); border:1px solid var(--stroke); border-radius:12px; padding:10px; }}
+        .k {{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }}
+        .v {{ font-size:28px; font-weight:750; margin-top:4px; }}
+        .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }}
+        .panel {{ background:var(--surface); border:1px solid var(--stroke); border-radius:14px; padding:14px; }}
+        .panel h2 {{ margin:0 0 10px 0; font-size:14px; color:#1e3a8a; text-transform:uppercase; letter-spacing:.08em; }}
+        .sev-row {{ display:grid; grid-template-columns:160px 1fr 46px; align-items:center; gap:8px; margin-bottom:8px; }}
+        .label {{ color:var(--muted); font-size:13px; display:flex; align-items:center; gap:8px; }}
+        .dot {{ width:10px; height:10px; border-radius:999px; display:inline-block; }}
+        .track {{ background:#e2e8f0; border-radius:999px; height:12px; overflow:hidden; }}
+        .fill {{ height:12px; border-radius:999px; }}
+        .count {{ text-align:right; font-weight:700; }}
+        table {{ width:100%; border-collapse:collapse; }}
+        th,td {{ border:1px solid #e2e8f0; padding:8px 10px; text-align:left; font-size:13px; vertical-align:top; }}
+        th {{ background:#f1f5f9; color:#334155; }}
+        ul {{ margin:0; padding-left:18px; color:#334155; }}
+        .footer {{ margin-top:16px; color:#64748b; font-size:12px; }}
+        @media (max-width: 960px) {{ .grid {{ grid-template-columns:1fr; }} }}
+    </style>
+</head>
+<body>
+    <div class=\"wrap\">
+        <header class=\"hero\">
+            <h1>🗂️ Vyper Guard Project Security Report</h1>
+            <p><strong>Target:</strong> {_html.escape(str(target_dir))} · <strong>Contracts:</strong> {len(reports)} · <strong>Duration:</strong> {elapsed_ms:.0f} ms</p>
+        </header>
+
+        <section class=\"cards\">
+            <div class=\"card\"><div class=\"k\">Avg Score</div><div class=\"v\">{avg_score}</div></div>
+            <div class=\"card\"><div class=\"k\">Total Findings</div><div class=\"v\">{summary["total"]}</div></div>
+            <div class=\"card\"><div class=\"k\">Critical</div><div class=\"v\">{summary["critical"]}</div></div>
+            <div class=\"card\"><div class=\"k\">High</div><div class=\"v\">{summary["high"]}</div></div>
+            <div class=\"card\"><div class=\"k\">Medium</div><div class=\"v\">{summary["medium"]}</div></div>
+            <div class=\"card\"><div class=\"k\">Low</div><div class=\"v\">{summary["low"]}</div></div>
+            <div class=\"card\"><div class=\"k\">Info</div><div class=\"v\">{summary["info"]}</div></div>
+        </section>
+
+        <section class=\"grid\">
+            <article class=\"panel\"><h2>Severity Distribution</h2>{sev_bars}</article>
+            <article class=\"panel\">
+                <h2>Per-file Summary</h2>
+                <table>
+                    <thead><tr><th>#</th><th>File</th><th>Score</th><th>Grade</th><th>Findings</th></tr></thead>
+                    <tbody>{"".join(per_file_rows)}</tbody>
+                </table>
+            </article>
+        </section>
+
+        {baseline_html}
+
+        <section class=\"panel\" style=\"margin-top:14px;\">
+            <h2>Issue Report</h2>
+            <table>
+                <thead><tr><th>File</th><th>Severity</th><th>Detector</th><th>Type</th><th>Line</th><th>Title</th><th>Explanation</th></tr></thead>
+                <tbody>{"".join(issue_rows)}</tbody>
+            </table>
+        </section>
+
+        <footer class=\"footer\">Generated by vyper-guard v{_html.escape(__version__)}.</footer>
+    </div>
+</body>
+</html>
+"""
+
+
+def _project_json_payload(
+    target_dir: Path,
+    reports: list[AnalysisReport],
+    elapsed_ms: float,
+    baseline_diff: dict[str, object] | None = None,
+) -> dict[str, object]:
+    summary = _summarize_reports(reports)
+    payload: dict[str, object] = {
+        "$schema": "vyper-guard-project-report/v1",
+        "tool": {
+            "name": "vyper-guard",
+            "version": __version__,
+            "url": "https://deepwiki.com/preethamak/vyper",
+        },
+        "target_directory": str(target_dir),
+        "contracts_analyzed": len(reports),
+        "duration_ms": round(elapsed_ms, 2),
+        "summary": summary,
+        "reports": [report_to_dict(report) for report in reports],
+    }
+    baseline_meta = _project_baseline_meta(reports)
+    if baseline_meta is not None:
+        payload["baseline"] = baseline_meta
+    if baseline_diff is not None:
+        payload["baseline_diff"] = baseline_diff
+    return payload
+
+
+def _project_baseline_meta(reports: list[AnalysisReport]) -> dict[str, object] | None:
+    baseline_contexts = []
+    for report in reports:
+        baseline = (
+            report.analysis_context.get("baseline")
+            if isinstance(report.analysis_context, dict)
+            else None
+        )
+        if isinstance(baseline, dict):
+            baseline_contexts.append(baseline)
+
+    if not baseline_contexts:
+        return None
+
+    baseline_file = str(baseline_contexts[0].get("file") or "")
+    entries = int(baseline_contexts[0].get("entries") or 0)
+    before_total = sum(
+        int(item.get("findings_before_suppression") or 0) for item in baseline_contexts
+    )
+    suppressed_total = sum(int(item.get("findings_suppressed") or 0) for item in baseline_contexts)
+    active_total = sum(int(item.get("findings_active") or 0) for item in baseline_contexts)
+
+    return {
+        "file": baseline_file,
+        "entries": entries,
+        "findings_before_suppression": before_total,
+        "findings_suppressed": suppressed_total,
+        "findings_active": active_total,
+    }
+
+
+def _project_sarif_payload(
+    target_dir: Path,
+    reports: list[AnalysisReport],
+    baseline_diff: dict[str, object] | None = None,
+) -> dict[str, object]:
+    rules_by_id: dict[str, dict[str, object]] = {}
+    results: list[dict[str, object]] = []
+
+    for report in reports:
+        sarif = report_to_sarif_dict(report)
+        run = sarif.get("runs", [{}])[0]
+        driver = (run.get("tool") or {}).get("driver") or {}
+        for rule in driver.get("rules", []):
+            if isinstance(rule, dict) and isinstance(rule.get("id"), str):
+                rules_by_id[str(rule["id"])] = rule
+        for result in run.get("results", []):
+            if isinstance(result, dict):
+                results.append(result)
+
+    summary = _summarize_reports(reports)
+    payload: dict[str, object] = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "vyper-guard",
+                        "version": __version__,
+                        "informationUri": "https://deepwiki.com/preethamak/vyper",
+                        "rules": list(rules_by_id.values()),
+                    }
+                },
+                "results": results,
+                "properties": {
+                    "target_directory": str(target_dir),
+                    "contracts_analyzed": len(reports),
+                    "summary": summary,
+                },
+            }
+        ],
+    }
+
+    baseline_meta = _project_baseline_meta(reports)
+    if baseline_meta is not None:
+        run_properties = payload["runs"][0]["properties"]
+        if isinstance(run_properties, dict):
+            run_properties["baseline"] = baseline_meta
+    if baseline_diff is not None:
+        run_properties = payload["runs"][0]["properties"]
+        if isinstance(run_properties, dict):
+            run_properties["baseline_diff"] = baseline_diff
+    return payload
+
+
+def _print_project_cli_summary(
+    target_dir: Path, reports: list[AnalysisReport], elapsed_ms: float
+) -> None:
+    summary = _summarize_reports(reports)
+    score_avg = round(sum(r.security_score for r in reports) / max(1, len(reports)))
+
+    console.print(Rule("[bold]🗂️ Project Analysis Summary[/bold]", style=ACCENT))
+    summary_table = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), expand=True)
+    summary_table.add_column("Key", style=f"bold {ACCENT}", min_width=20)
+    summary_table.add_column("Value")
+    summary_table.add_row("📁 Target", str(target_dir))
+    summary_table.add_row("📄 Contracts", str(len(reports)))
+    summary_table.add_row("🔎 Findings", str(summary["total"]))
+    summary_table.add_row("🚨 Critical", str(summary["critical"]))
+    summary_table.add_row("🟠 High", str(summary["high"]))
+    summary_table.add_row("🟡 Medium", str(summary["medium"]))
+    summary_table.add_row("🔵 Low", str(summary["low"]))
+    summary_table.add_row("⚪ Info", str(summary["info"]))
+    summary_table.add_row("📊 Avg Score", str(score_avg))
+    summary_table.add_row("⏱️ Duration", f"{elapsed_ms:.0f} ms")
+    console.print(summary_table)
+    console.print()
+
+    per_file = Table(title="Per-file Results", box=box.SIMPLE_HEAVY)
+    per_file.add_column("File", style=f"bold {ACCENT}")
+    per_file.add_column("Score", justify="right")
+    per_file.add_column("Grade", justify="center")
+    per_file.add_column("Findings", justify="right")
+
+    for report in reports:
+        per_file.add_row(
+            str(Path(report.file_path)),
+            str(report.security_score),
+            report.grade.value,
+            str(len(report.findings)),
+        )
+
+    console.print(per_file)
+    console.print()
+
+
+def _analyze_directory_target(
+    *,
+    target_dir: Path,
+    analyzer: StaticAnalyzer,
+    fmt: str,
+    output: Path | None,
+    ci: bool,
+    baseline_file: Path | None,
+    baseline_fingerprints: set[str],
+    baseline_diff: bool,
+    update_baseline: bool,
+) -> None:
+    vy_files = sorted(path for path in target_dir.rglob("*.vy") if path.is_file())
+    if not vy_files:
+        console.print(
+            f"[{ERR}]No Vyper contracts found in directory:[/{ERR}] {target_dir} (expected *.vy files)"
+        )
+        raise typer.Exit(code=2)
+
+    reports: list[AnalysisReport] = []
+    t0 = _time.perf_counter()
+    if fmt == "cli":
+        with Progress(
+            SpinnerColumn("dots"),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=25),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(
+                f"[{ACCENT}]Scanning {len(vy_files)} contract(s) in {target_dir.name}…",
+                total=len(vy_files),
+            )
+            for contract in vy_files:
+                report = analyzer.analyze_file(contract)
+                reports.append(report)
+                progress.update(task, advance=1, description=f"Scanned {contract.name}")
+    else:
+        for contract in vy_files:
+            reports.append(analyzer.analyze_file(contract))
+
+    raw_fingerprints: set[str] = set()
+    for report in reports:
+        raw_fingerprints.update(_collect_report_fingerprints(report))
+
+    baseline_diff_meta: dict[str, object] | None = None
+    if baseline_diff and baseline_file is not None:
+        baseline_diff_meta = {
+            "file": str(baseline_file),
+            **_compute_baseline_diff(raw_fingerprints, baseline_fingerprints),
+        }
+
+    if update_baseline and baseline_file is not None:
+        _write_finding_baseline(
+            baseline_file,
+            raw_fingerprints,
+            target=str(target_dir),
+        )
+
+    suppressed_total = 0
+    for report in reports:
+        before_count = len(report.findings)
+        suppressed_count = _apply_finding_baseline(report, baseline_fingerprints)
+        suppressed_total += suppressed_count
+        if baseline_file is not None:
+            report.analysis_context = dict(report.analysis_context)
+            report.analysis_context["baseline"] = {
+                "file": str(baseline_file),
+                "entries": len(baseline_fingerprints),
+                "findings_before_suppression": before_count,
+                "findings_suppressed": suppressed_count,
+                "findings_active": len(report.findings),
+            }
+
+    if suppressed_total and fmt == "cli":
+        console.print(
+            f"[{WARN}]Baseline suppression applied:[/{WARN}] {suppressed_total} finding(s) hidden."
+        )
+
+    elapsed_ms = (_time.perf_counter() - t0) * 1000
+
+    if fmt == "json":
+        payload = _project_json_payload(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        text = _json.dumps(payload, indent=2, ensure_ascii=False)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "sarif":
+        payload = _project_sarif_payload(target_dir, reports, baseline_diff_meta)
+        text = _json.dumps(payload, indent=2, ensure_ascii=False)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "markdown":
+        text = _project_markdown_report(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "html":
+        text = _project_html_report(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    else:
+        _print_project_cli_summary(target_dir, reports, elapsed_ms)
+        if output:
+            payload = _project_json_payload(target_dir, reports, elapsed_ms, baseline_diff_meta)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(_json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if ci and any(report.findings for report in reports):
+        raise typer.Exit(code=1)
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  scan — alias for analyze (friendlier name for public users)
 # ═══════════════════════════════════════════════════════════════════
@@ -746,6 +1556,9 @@ def scan(
     ),
     format: str | None = typer.Option(None, "--format", "-f"),
     output: Path | None = typer.Option(None, "--output", "-o"),
+    baseline_file: Path | None = typer.Option(None, "--baseline-file"),
+    baseline_diff: bool = typer.Option(False, "--baseline-diff"),
+    update_baseline: bool = typer.Option(False, "--update-baseline"),
     detectors: str | None = typer.Option(None, "--detectors", "-d"),
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
     config: Path | None = typer.Option(None, "--config", "-c"),
@@ -768,6 +1581,9 @@ def scan(
         file_path=file_path,
         format=format,
         output=output,
+        baseline_file=baseline_file,
+        baseline_diff=baseline_diff,
+        update_baseline=update_baseline,
         detectors=detectors,
         severity_threshold=severity_threshold,
         config=config,
@@ -1150,6 +1966,9 @@ def fix_cmd(
         file_path=file_path,
         format=format,
         output=output,
+        baseline_file=None,
+        baseline_diff=False,
+        update_baseline=False,
         detectors=detectors,
         severity_threshold=severity_threshold,
         config=config,
@@ -1182,12 +2001,13 @@ def analyze_address(
     ),
     api_key: str | None = typer.Option(None, "--api-key", help="Explorer API key (or config/env)."),
     format: str | None = typer.Option(
-        None, "--format", "-f", help="Output format: cli, json, markdown."
+        None, "--format", "-f", help="Output format: cli, json, markdown, sarif, html."
     ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write report to this file."),
     save_source: Path | None = typer.Option(
         None, "--save-source", help="Persist fetched source to file."
     ),
+    save_abi: Path | None = typer.Option(None, "--save-abi", help="Persist fetched ABI to file."),
     detectors: str | None = typer.Option(
         None, "--detectors", "-d", help="Comma-separated detector names."
     ),
@@ -1212,7 +2032,7 @@ def analyze_address(
 ) -> None:
     """Analyze a deployed contract address by fetching verified source from explorer."""
     setup_logging(verbose)
-    from guardian.explorer.client import ExplorerClient, ExplorerError
+    from guardian.explorer.client import ExplorerClient, ExplorerError, ExplorerResponse
 
     cfg = load_config(None)
     selected_provider = (provider or cfg.explorer.provider).strip().lower()
@@ -1233,23 +2053,61 @@ def analyze_address(
             api_key=selected_api_key,
         ).fetch_contract(address)
     except ExplorerError as exc:
-        console.print(f"[{ERR}]Explorer lookup failed:[/{ERR}] {exc}")
-        console.print(
-            f"[{DIM}]Try:[/{DIM}]\n"
-            "  • Use a verified contract address\n"
-            "  • Override provider chain: --provider etherscan,blockscout,sourcify\n"
-            "  • Specify network explicitly: --network ethereum\n"
-            "  • Configure key when needed: vyper-guard explorer config set api-key <key>"
-        )
-        raise typer.Exit(code=2) from exc
+        if "timed out" in str(exc).lower():
+            console.print(
+                f"[{WARN}]Explorer request timed out:[/{WARN}] {exc}. "
+                "Proceeding with degraded metadata-only scan."
+            )
+            info = ExplorerResponse(
+                address=address,
+                network=selected_network,
+                source_code=None,
+                abi=[],
+                contract_name=None,
+                compiler_version=None,
+                optimization_used=None,
+                runs=None,
+                is_proxy=None,
+                implementation=None,
+                function_names=[],
+                raw={"explorer_error": str(exc)},
+                provider=selected_provider.split(",")[0] if selected_provider else "etherscan",
+            )
+        else:
+            console.print(f"[{ERR}]Explorer lookup failed:[/{ERR}] {exc}")
+            console.print(
+                f"[{DIM}]Try:[/{DIM}]\n"
+                "  • Use a verified contract address\n"
+                "  • Override provider chain: --provider etherscan,blockscout,sourcify\n"
+                "  • Specify network explicitly: --network ethereum\n"
+                "  • Configure key when needed: vyper-guard explorer config set api-key <key>"
+            )
+            raise typer.Exit(code=2) from exc
 
-    if not info.source_code:
-        console.print(f"[{ERR}]No verified source code available for address:[/{ERR}] {address}")
-        raise typer.Exit(code=2)
+    source_for_analysis = info.source_code or ""
+    explorer_context = _build_explorer_context(info)
+    source_language = str(explorer_context.get("source_language") or "unknown")
+    source_is_vyper = source_language == "vyper"
+    source_is_stub = not bool(source_for_analysis.strip())
+
+    source_notice: str | None = None
+    if source_is_stub:
+        source_notice = (
+            f"[{WARN}]Verified source unavailable for address:[/{WARN}] {address}. "
+            "Returning ABI/metadata-backed report instead of synthetic source analysis."
+        )
+    elif not source_is_vyper:
+        source_notice = (
+            f"[{WARN}]Non-Vyper source detected:[/{WARN}] {source_language}. "
+            "Returning metadata/ABI/stats without static Vyper analysis."
+        )
 
     if save_source:
         save_source.parent.mkdir(parents=True, exist_ok=True)
-        save_source.write_text(info.source_code, encoding="utf-8")
+        save_source.write_text(info.source_code or "", encoding="utf-8")
+    if save_abi and info.abi is not None:
+        save_abi.parent.mkdir(parents=True, exist_ok=True)
+        save_abi.write_text(_json.dumps(info.abi, indent=2, ensure_ascii=False), encoding="utf-8")
 
     enabled = ["all"]
     if detectors:
@@ -1271,16 +2129,76 @@ def analyze_address(
     )
 
     fmt = (format or cfg.reporting.default_format).lower()
-    if fmt not in {"cli", "json", "markdown"}:
-        console.print(f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown.[/{ERR}]")
+    if fmt not in {"cli", "json", "markdown", "sarif", "html"}:
+        console.print(
+            f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown, sarif, html.[/{ERR}]"
+        )
         raise typer.Exit(code=2)
 
+    if source_notice and fmt != "json":
+        console.print(source_notice)
+
     t0 = _time.perf_counter()
-    report = analyzer.analyze_source(
-        info.source_code,
-        file_path=f"explorer://{selected_network}/{address}",
+    if source_is_vyper:
+        report = analyzer.analyze_source(
+            source_for_analysis,
+            file_path=f"explorer://{info.network}/{address}",
+        )
+        report.vyper_version = report.vyper_version or info.compiler_version
+    else:
+        report = AnalysisReport(
+            file_path=f"explorer://{info.network}/{address}",
+            vyper_version=info.compiler_version if source_is_vyper else None,
+            analysis_context=explorer_context,
+            detectors_run=[],
+            security_score=100,
+            grade=SecurityGrade.A_PLUS,
+        )
+
+    report.analysis_context = explorer_context
+    note_title = (
+        "Verified source unavailable; using metadata-backed report"
+        if source_is_stub
+        else "Non-Vyper source detected; static Vyper analysis skipped"
+        if not source_is_vyper
+        else "Verified source unavailable; used metadata-backed analysis"
     )
-    report.vyper_version = report.vyper_version or info.compiler_version
+    if source_is_stub or not source_is_vyper:
+        report.findings.append(
+            DetectorResult(
+                detector_name="explorer_source_unavailable"
+                if source_is_stub
+                else "unsupported_source_language",
+                severity=Severity.INFO,
+                confidence=Confidence.HIGH,
+                vulnerability_type=VulnerabilityType.CODE_QUALITY,
+                title=note_title,
+                description=(
+                    "The explorer did not provide verified Vyper source for this address. "
+                    "Vyper Guard returned a report backed by explorer metadata, ABI, and contract stats."
+                    if source_is_stub
+                    else "The explorer returned Solidity or another non-Vyper source, so Vyper static analysis was skipped."
+                ),
+                line_number=None,
+                source_snippet=None,
+                fix_suggestion=(
+                    "Verify the contract source on the explorer and ensure it is Vyper-compatible, or provide "
+                    "the source file directly to `vyper-guard analyze`."
+                ),
+                why_flagged=(
+                    "No verified source code was returned by explorer providers."
+                    if source_is_stub
+                    else f"Explorer returned non-Vyper source ({source_language})."
+                ),
+                evidence=[
+                    f"address:{address}",
+                    f"provider:{info.provider}",
+                    f"network:{info.network}",
+                    f"source_language:{source_language}",
+                ],
+                why_not_suppressed="Source-availability warnings are never suppressed.",
+            )
+        )
     elapsed_ms = (_time.perf_counter() - t0) * 1000
 
     triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed = (
@@ -1294,7 +2212,7 @@ def analyze_address(
             ai_allow_fallback=ai_allow_fallback,
         )
     )
-    if triage_enabled:
+    if triage_enabled and source_is_vyper:
         if triage_mode == "llm":
             from guardian.agents.llm_triage import LLMTriageError, apply_llm_triage
 
@@ -1303,7 +2221,7 @@ def analyze_address(
             try:
                 apply_llm_triage(
                     report,
-                    info.source_code,
+                    source_for_analysis,
                     api_key=llm_key,
                     model=llm_model,
                     provider=cfg.llm.provider,
@@ -1341,11 +2259,21 @@ def analyze_address(
         text = export_json(report, output)
         if not output:
             typer.echo(text)
+    elif fmt == "sarif":
+        text = export_sarif(report, output)
+        if not output:
+            typer.echo(text)
     elif fmt == "markdown":
         text = export_markdown(report, output)
         if not output:
             typer.echo(text)
+    elif fmt == "html":
+        text = export_html(report, output)
+        if not output:
+            typer.echo(text)
     else:
+        if report.analysis_context:
+            _print_explorer_summary(report.analysis_context, elapsed_ms)
         _print_rich_report(report, elapsed_ms)
         if output:
             export_json(report, output)
@@ -1358,6 +2286,167 @@ def _mask_secret(secret: str) -> str:
     if len(secret) <= 8:
         return "***"
     return secret[:4] + "..." + secret[-4:]
+
+
+def _build_explorer_contract_stats(info: object) -> dict[str, object]:
+    from guardian.explorer.client import ExplorerResponse
+
+    assert isinstance(info, ExplorerResponse)
+    abi = info.abi or []
+    function_entries = [item for item in abi if item.get("type") == "function"]
+    event_entries = [item for item in abi if item.get("type") == "event"]
+    constructor_entries = [item for item in abi if item.get("type") == "constructor"]
+    fallback_entries = [item for item in abi if item.get("type") == "fallback"]
+    receive_entries = [item for item in abi if item.get("type") == "receive"]
+
+    mutability_counts: dict[str, int] = {}
+    for item in function_entries:
+        mutability = str(item.get("stateMutability") or "nonpayable")
+        mutability_counts[mutability] = mutability_counts.get(mutability, 0) + 1
+
+    return {
+        "abi_entries": len(abi),
+        "function_count": len(function_entries),
+        "event_count": len(event_entries),
+        "constructor_count": len(constructor_entries),
+        "fallback_count": len(fallback_entries),
+        "receive_count": len(receive_entries),
+        "state_mutability_counts": mutability_counts,
+        "function_names": info.function_names,
+    }
+
+
+def _infer_explorer_source_language(info: object) -> str:
+    from guardian.explorer.client import ExplorerResponse
+
+    assert isinstance(info, ExplorerResponse)
+    source_code = (info.source_code or "").lower()
+    source_payload = info.raw.get("source") if isinstance(info.raw.get("source"), dict) else {}
+    result = source_payload.get("result") if isinstance(source_payload, dict) else None
+    source_result = (
+        result[0] if isinstance(result, list) and result and isinstance(result[0], dict) else {}
+    )
+    compiler_type = str(source_result.get("CompilerType") or "").lower()
+    contract_file_name = str(source_result.get("ContractFileName") or "").lower()
+
+    if (
+        "pragma solidity" in source_code
+        or "solc" in compiler_type
+        or contract_file_name.endswith(".sol")
+    ):
+        return "solidity"
+    if "# @version" in source_code or "# pragma version" in source_code:
+        return "vyper"
+    if source_code.strip():
+        return "source"
+    return "unknown"
+
+
+def _build_explorer_context(info: object) -> dict[str, object]:
+    from guardian.explorer.client import ExplorerResponse
+
+    assert isinstance(info, ExplorerResponse)
+    source_available = bool(info.source_code and info.source_code.strip())
+    return {
+        "address": info.address,
+        "network": info.network,
+        "provider": info.provider,
+        "source_language": _infer_explorer_source_language(info),
+        "contract_name": info.contract_name,
+        "compiler_version": info.compiler_version,
+        "contract_file_name": (
+            str(
+                ((info.raw.get("source") or {}).get("result") or [{}])[0].get("ContractFileName")
+                if isinstance(info.raw.get("source"), dict)
+                else ""
+            )
+            or None
+        ),
+        "optimization_used": info.optimization_used,
+        "runs": info.runs,
+        "is_proxy": info.is_proxy,
+        "implementation": info.implementation,
+        "source_available": source_available,
+        "stats": _build_explorer_contract_stats(info),
+        "abi": info.abi or [],
+    }
+
+
+def _print_explorer_summary(explorer_context: dict[str, object], elapsed_ms: float = 0.0) -> None:
+    title = explorer_context.get("contract_name") or "Explorer Contract Summary"
+    console.print(Rule(f"[bold]🧭 {title}[/bold]", style=ACCENT))
+
+    summary_table = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), expand=True)
+    summary_table.add_column("Key", style=f"bold {ACCENT}", min_width=20)
+    summary_table.add_column("Value")
+    summary_table.add_row("📍 Address", str(explorer_context.get("address") or "n/a"))
+    summary_table.add_row("🌐 Network", str(explorer_context.get("network") or "n/a"))
+    summary_table.add_row("🔌 Provider", str(explorer_context.get("provider") or "n/a"))
+    summary_table.add_row(
+        "🧬 Source Language", str(explorer_context.get("source_language") or "unknown")
+    )
+    summary_table.add_row("📦 Contract Name", str(explorer_context.get("contract_name") or "n/a"))
+    summary_table.add_row("⚙️ Compiler", str(explorer_context.get("compiler_version") or "n/a"))
+    summary_table.add_row(
+        "🧪 Source Available",
+        "yes" if explorer_context.get("source_available") else "no",
+    )
+    summary_table.add_row("⏱️  Lookup Duration", f"{elapsed_ms:.0f} ms" if elapsed_ms > 0 else "n/a")
+    console.print(summary_table)
+    console.print()
+
+    stats = explorer_context.get("stats") if isinstance(explorer_context.get("stats"), dict) else {}
+    stats_table = Table(box=box.SIMPLE_HEAVY, show_header=False, padding=(0, 1), expand=True)
+    stats_table.add_column("Metric", style=f"bold {ACCENT}", min_width=18)
+    stats_table.add_column("Value")
+    stats_table.add_row("ABI entries", str(stats.get("abi_entries", 0)))
+    stats_table.add_row("Functions", str(stats.get("function_count", 0)))
+    stats_table.add_row("Events", str(stats.get("event_count", 0)))
+    stats_table.add_row("Constructors", str(stats.get("constructor_count", 0)))
+    stats_table.add_row("Fallbacks", str(stats.get("fallback_count", 0)))
+    stats_table.add_row("Receives", str(stats.get("receive_count", 0)))
+
+    mutability_counts_obj = stats.get("state_mutability_counts") if isinstance(stats, dict) else {}
+    mutability_counts = mutability_counts_obj if isinstance(mutability_counts_obj, dict) else {}
+    mutability_text = (
+        ", ".join(f"{name}={count}" for name, count in sorted(mutability_counts.items())) or "n/a"
+    )
+    stats_table.add_row("Mutability", mutability_text)
+
+    abi_obj = explorer_context.get("abi")
+    abi_entries = abi_obj if isinstance(abi_obj, list) else []
+    function_names_obj = stats.get("function_names") if isinstance(stats, dict) else []
+    function_names = function_names_obj if isinstance(function_names_obj, list) else []
+
+    explorer_table = Table.grid(expand=True)
+    explorer_table.add_column(ratio=1)
+    explorer_table.add_column(ratio=1)
+    explorer_table.add_row(
+        Panel(
+            stats_table, title="[bold]Explorer Stats[/bold]", border_style=ACCENT, padding=(0, 1)
+        ),
+        Panel(
+            "\n".join(
+                [
+                    f"[bold]{len(abi_entries)}[/bold] ABI entries loaded",
+                    f"[bold]{len(function_names)}[/bold] named functions",
+                    (
+                        f"[dim]Implementation:[/dim] {explorer_context.get('implementation') or 'n/a'}"
+                        if explorer_context.get("implementation")
+                        else "[dim]Implementation:[/dim] n/a"
+                    ),
+                    (
+                        f"[dim]Proxy:[/dim] {explorer_context.get('is_proxy') if explorer_context.get('is_proxy') is not None else 'n/a'}"
+                    ),
+                ]
+            ),
+            title="[bold]Explorer Notes[/bold]",
+            border_style=ACCENT,
+            padding=(0, 1),
+        ),
+    )
+    console.print(explorer_table)
+    console.print()
 
 
 @app.command(name="explorer")
@@ -1551,6 +2640,7 @@ def explorer_lookup(
         "function_names": info.function_names,
         "has_source_code": bool(info.source_code),
         "abi_entries": len(info.abi or []),
+        "explorer": _build_explorer_context(info),
     }
 
     if format.lower() == "json":
@@ -2294,7 +3384,7 @@ def _print_analysis_footer(report: AnalysisReport) -> None:
 
     console.print(
         Rule(
-            f"[dim]{__app_name__} v{__version__} • https://github.com/preethamak/vyper[/dim]",
+            f"[dim]{__app_name__} v{__version__} • https://deepwiki.com/preethamak/vyper • https://vyper-web.vercel.app[/dim]",
             style="dim",
         )
     )
@@ -2822,9 +3912,7 @@ def detectors_cmd() -> None:
     console.print(table)
     console.print()
     console.print(f"  [{DIM}]{len(dets)} detectors available  •  all enabled by default[/{DIM}]")
-    console.print(
-        f"  [{DIM}]Docs: https://github.com/preethamak/vyper/blob/main/docs/DETECTORS.md[/{DIM}]"
-    )
+    console.print(f"  [{DIM}]Docs: https://deepwiki.com/preethamak/vyper[/{DIM}]")
     console.print()
 
 
@@ -2917,9 +4005,9 @@ def _write_stats_graph_artifacts(
         return f"M {sx:.2f} {sy:.2f} A {r:.2f} {r:.2f} 0 {large_arc} 1 {ex:.2f} {ey:.2f}"
 
     line_segments = [
-        ("Code", _clamp_pct(code_pct), "#7f56d9"),
-        ("Comments", _clamp_pct(comment_pct), "#a78bfa"),
-        ("Blank", _clamp_pct(blank_pct), "#d6bcfa"),
+        ("Code", _clamp_pct(code_pct), "#2563eb"),
+        ("Comments", _clamp_pct(comment_pct), "#0f766e"),
+        ("Blank", _clamp_pct(blank_pct), "#f59e0b"),
     ]
 
     donut_paths: list[str] = []
@@ -2937,10 +4025,10 @@ def _write_stats_graph_artifacts(
 
     donut_svg = (
         '<svg viewBox="0 0 360 360" aria-label="Line composition donut chart">'
-        '<circle cx="180" cy="180" r="118" stroke="#e8e4f7" stroke-width="44" fill="none" />'
+        '<circle cx="180" cy="180" r="118" stroke="#e2e8f0" stroke-width="44" fill="none" />'
         + "".join(donut_paths)
         + '<circle cx="180" cy="180" r="80" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />'
-        + f'<text x="180" y="175" text-anchor="middle" fill="#3f2a80" font-size="42" font-weight="700">{total_lines}</text>'
+        + f'<text x="180" y="175" text-anchor="middle" fill="#0f172a" font-size="42" font-weight="700">{total_lines}</text>'
         + '<text x="180" y="198" text-anchor="middle" fill="#6b7280" font-size="13">total lines</text>'
         + "</svg>"
     )
@@ -2963,11 +4051,12 @@ def _write_stats_graph_artifacts(
         h = (value / structure_max) * 200 if structure_max else 0
         x = 54 + idx * slot_w + ((slot_w - bar_w) / 2)
         y = 224 - h
+        bar_color = ["#2563eb", "#7c3aed", "#0f766e", "#f59e0b"][idx % 4]
         structure_parts.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w}" height="{h:.1f}" fill="#7f56d9" rx="6" />'
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w}" height="{h:.1f}" fill="{bar_color}" rx="6" />'
         )
         structure_parts.append(
-            f'<text x="{x + bar_w / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>'
+            f'<text x="{x + bar_w / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="700">{value}</text>'
         )
         structure_parts.append(
             f'<text x="{x + bar_w / 2:.1f}" y="256" text-anchor="middle" fill="#4b5563" font-size="12">{_html.escape(label)}</text>'
@@ -2998,13 +4087,13 @@ def _write_stats_graph_artifacts(
         w = (value / fn_max) * 430 if fn_max else 0
         fn_parts.append(f'<rect x="170" y="{y}" width="430" height="18" fill="#eef0f4" rx="4" />')
         fn_parts.append(
-            f'<rect x="170" y="{y}" width="{w:.1f}" height="18" fill="#a78bfa" rx="4" />'
+            f'<rect x="170" y="{y}" width="{w:.1f}" height="18" fill="#2563eb" rx="4" />'
         )
         fn_parts.append(
             f'<text x="162" y="{y + 13}" text-anchor="end" fill="#4b5563" font-size="12">{_html.escape(name)}</text>'
         )
         fn_parts.append(
-            f'<text x="{170 + w + 8:.1f}" y="{y + 13}" fill="#3f2a80" font-size="12" font-weight="700">{value} lines</text>'
+            f'<text x="{170 + w + 8:.1f}" y="{y + 13}" fill="#0f172a" font-size="12" font-weight="700">{value} lines</text>'
         )
     fn_parts.append("</svg>")
     fn_svg = "".join(fn_parts)
@@ -3020,7 +4109,7 @@ def _write_stats_graph_artifacts(
         '<circle cx="110" cy="110" r="82" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />'
         '<circle cx="110" cy="110" r="82" fill="none" stroke="#eceff3" stroke-width="18" />'
         + f'<circle cx="110" cy="110" r="82" fill="none" stroke="{gauge_color}" stroke-width="18" stroke-dasharray="{gauge_progress:.2f} {gauge_c:.2f}" transform="rotate(-90 110 110)" />'
-        + f'<text x="110" y="112" text-anchor="middle" fill="#3f2a80" font-size="34" font-weight="800">{complexity_index:.1f}</text>'
+        + f'<text x="110" y="112" text-anchor="middle" fill="#0f172a" font-size="34" font-weight="800">{complexity_index:.1f}</text>'
         + f'<text x="110" y="134" text-anchor="middle" fill="#6b7280" font-size="12">{_html.escape(complexity_band)} complexity</text>'
         + "</svg>"
     )
@@ -3059,12 +4148,13 @@ def _write_stats_graph_artifacts(
         h = (value / flow_max) * 170 if flow_max else 0
         x = 72 + idx * slot + (slot - width) / 2
         y = 200 - h
-        color = "#7f56d9" if idx < 3 else "#6d28d9"
+        flow_palette = ["#2563eb", "#7c3aed", "#0f766e", "#f59e0b", "#0891b2", "#dc2626", "#16a34a"]
+        color = flow_palette[idx % len(flow_palette)]
         flow_svg_parts.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{width}" height="{h:.1f}" fill="{color}" rx="5" />'
         )
         flow_svg_parts.append(
-            f'<text x="{x + width / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#3f2a80" font-size="12" font-weight="700">{value}</text>'
+            f'<text x="{x + width / 2:.1f}" y="{y - 8:.1f}" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="700">{value}</text>'
         )
         flow_svg_parts.append(
             f'<text x="{x + width / 2:.1f}" y="234" text-anchor="middle" fill="#4b5563" font-size="10">{_html.escape(label)}</text>'
@@ -3107,6 +4197,20 @@ def _write_stats_graph_artifacts(
             seen_edges.add(tup)
             unique_edges.append(tup)
     edges = unique_edges
+
+    edge_counter: dict[tuple[str, str], int] = {}
+    for a, b in edges:
+        edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
+    edge_rows: list[str] = []
+    for (a, b), count in sorted(edge_counter.items(), key=lambda item: item[1], reverse=True)[:120]:
+        edge_rows.append(
+            f"<tr><td>{_html.escape(a)}</td><td>{_html.escape(b)}</td><td class='val'>{count}</td></tr>"
+        )
+    if not edge_rows:
+        edge_rows.append(
+            "<tr><td colspan='3'>No internal function call mapping available.</td></tr>"
+        )
+    edge_map_html = "".join(edge_rows)
 
     def _var_preview(values: object) -> str:
         if not isinstance(values, list):
@@ -3219,11 +4323,11 @@ def _write_stats_graph_artifacts(
         f'<rect x="0" y="0" width="{total_w:.0f}" height="{graph_h:.0f}" fill="#ffffff" />',
         '<text x="24" y="26" fill="#4b5563" font-size="12">solid: internal control flow (multi-color by path)</text>',
         '<text x="390" y="26" fill="#6b7280" font-size="12">dashed: external/state interactions</text>',
-        f'<rect x="{external_box[0]}" y="{external_box[1]}" width="{external_box[2]}" height="{external_box[3]}" rx="10" fill="#f5f3ff" stroke="#c4b5fd" />',
-        f'<text x="{external_box[0] + 12}" y="{external_box[1] + 24}" fill="#5b3da5" font-size="13" font-weight="700">External Surface</text>',
+        f'<rect x="{external_box[0]}" y="{external_box[1]}" width="{external_box[2]}" height="{external_box[3]}" rx="10" fill="#e8f5e9" stroke="#86efac" />',
+        f'<text x="{external_box[0] + 12}" y="{external_box[1] + 24}" fill="#166534" font-size="13" font-weight="700">External Surface</text>',
         f'<text x="{external_box[0] + 12}" y="{external_box[1] + 44}" fill="#6b7280" font-size="12">send/raw_call/create_*</text>',
-        f'<rect x="{storage_box[0]}" y="{storage_box[1]}" width="{storage_box[2]}" height="{storage_box[3]}" rx="10" fill="#f9fafb" stroke="#d1d5db" />',
-        f'<text x="{storage_box[0] + 12}" y="{storage_box[1] + 24}" fill="#374151" font-size="13" font-weight="700">State Surface</text>',
+        f'<rect x="{storage_box[0]}" y="{storage_box[1]}" width="{storage_box[2]}" height="{storage_box[3]}" rx="10" fill="#eff6ff" stroke="#93c5fd" />',
+        f'<text x="{storage_box[0] + 12}" y="{storage_box[1] + 24}" fill="#1d4ed8" font-size="13" font-weight="700">State Surface</text>',
         f'<text x="{storage_box[0] + 12}" y="{storage_box[1] + 44}" fill="#6b7280" font-size="12">self.* reads / writes</text>',
     ]
 
@@ -3263,7 +4367,7 @@ def _write_stats_graph_artifacts(
             f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="{fill}" stroke="{stroke}" />'
         )
         node_parts.append(
-            f'<text x="{x + 12}" y="{y + 22}" fill="#3f2a80" font-size="13" font-weight="700">{_html.escape(name)}</text>'
+            f'<text x="{x + 12}" y="{y + 22}" fill="#0f172a" font-size="13" font-weight="700">{_html.escape(name)}</text>'
         )
         node_parts.append(
             f'<text x="{x + 12}" y="{y + 42}" fill="#4b5563" font-size="11">'
@@ -3445,7 +4549,7 @@ def _write_stats_graph_artifacts(
                 }}
                 .wrap {{ max-width: 1260px; margin: 0 auto; }}
                 .hero {{
-                        background: linear-gradient(180deg, #fcfbff 0%, #f6f3ff 100%);
+                    background: linear-gradient(115deg, #eff6ff 0%, #ecfdf5 55%, #fff7ed 120%);
                         border: 1px solid var(--stroke);
                         border-radius: 16px;
                         padding: 18px 20px;
@@ -3455,11 +4559,11 @@ def _write_stats_graph_artifacts(
                 .hero .file {{ color: var(--muted); margin-top: 6px; word-break: break-all; }}
                 .chips {{ margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }}
                 .chip {{
-                    border: 1px solid #d9cff5;
-                    background: #f4edff;
+                    border: 1px solid #bfdbfe;
+                    background: #eff6ff;
                         border-radius: 999px;
                         padding: 6px 12px;
-                    color: #5b3da5;
+                    color: #1d4ed8;
                         font-size: 12px;
                 }}
                 .kpis {{
@@ -3498,7 +4602,7 @@ def _write_stats_graph_artifacts(
                         font-size: 14px;
                         text-transform: uppercase;
                         letter-spacing: .08em;
-                    color: #5b3da5;
+                    color: #1e3a8a;
                 }}
                 .chart {{ width: 100%; }}
                 .legend {{
@@ -3529,7 +4633,7 @@ def _write_stats_graph_artifacts(
                 }}
                 th {{ background: var(--panel-2); color: #4b5563; }}
                 td {{ background: #ffffff; }}
-                .val {{ font-weight: 700; color: #5b3da5; white-space: nowrap; }}
+                .val {{ font-weight: 700; color: #1e3a8a; white-space: nowrap; }}
                 .payload-json {{ display:none; }}
         </style>
 </head>
@@ -3588,6 +4692,14 @@ def _write_stats_graph_artifacts(
                                 <table>
                                     <thead><tr><th>Function</th><th>External Calls</th><th>Internal Calls</th><th>Branches/Loops/Asserts</th><th>State Reads/Writes</th></tr></thead>
                                     <tbody>{function_behavior_html}</tbody>
+                                </table>
+                            </article>
+
+                            <article class="panel" style="grid-column: 1 / -1;">
+                                <h2>Interaction Mapping (Tabular)</h2>
+                                <table>
+                                    <thead><tr><th>From Function</th><th>To Function</th><th>Edge Count</th></tr></thead>
+                                    <tbody>{edge_map_html}</tbody>
                                 </table>
                             </article>
                 </section>
@@ -4128,7 +5240,7 @@ def diff(
 
 _DEFAULT_CONFIG = """\
 # .guardianrc — Vyper Guard configuration
-# Docs: https://github.com/preethamak/vyper
+# Docs: https://deepwiki.com/preethamak/vyper
 
 analysis:
   # Which detectors to enable ("all" or a list)
@@ -4140,7 +5252,7 @@ analysis:
   severity_threshold: LOW
 
 reporting:
-  # Default output format: cli, json, markdown
+    # Default output format: cli, json, markdown, sarif, html
   default_format: cli
   show_source_snippets: true
   show_fix_suggestions: true

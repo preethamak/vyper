@@ -201,6 +201,10 @@ class AnalysisReport(BaseModel):
     file_path: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     vyper_version: str | None = None
+    analysis_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional context about the analyzed artifact, such as explorer metadata or ABI-derived stats.",
+    )
     findings: list[DetectorResult] = Field(default_factory=list)
     ai_triage: list[dict[str, Any]] = Field(
         default_factory=list,

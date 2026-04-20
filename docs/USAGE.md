@@ -1,5 +1,22 @@
 # Usage Guide
 
+Official links:
+
+- Website: https://vyper-web.vercel.app
+- DeepWiki: https://deepwiki.com/preethamak/vyper
+
+## Command Help
+
+```bash
+# Show organized command map
+vyper-guard help
+
+# Show command-specific flags/options
+vyper-guard analyze -h
+vyper-guard analyze-address -h
+vyper-guard stats -h
+```
+
 ## Static Analysis
 
 ### Basic Scan
@@ -11,6 +28,10 @@ vyper-guard analyze path/to/contract.vy
 # Absolute paths work too
 vyper-guard analyze /home/user/projects/my_vault.vy
 ```
+
+Command note:
+
+- `audit` is a reserved command path and can be unavailable in this build.
 
 ### Output Formats
 
@@ -24,8 +45,47 @@ vyper-guard analyze contract.vy --format json --output report.json
 # Markdown report
 vyper-guard analyze contract.vy --format markdown --output report.md
 
+# SARIF report (for GitHub/GitLab/Azure code scanning)
+vyper-guard analyze contract.vy --format sarif --output report.sarif
+
+# Presentation-ready HTML report
+vyper-guard analyze contract.vy --format html --output report.html
+
 # If --format is omitted, the default comes from .guardianrc (reporting.default_format)
 ```
+
+### Directory / Project Scan
+
+```bash
+# Recursively scan all *.vy files under the directory
+vyper-guard analyze contracts/
+
+# Machine-readable project report
+vyper-guard analyze contracts/ --format json --output contracts-report.json
+
+# Project SARIF report for code scanning
+vyper-guard analyze contracts/ --format sarif --output contracts.sarif
+
+# Project HTML report (summary + issue table)
+vyper-guard analyze contracts/ --format html --output contracts-report.html
+
+# Suppress known findings using a fingerprint baseline
+vyper-guard analyze contracts/ --format json --baseline-file .guardian-baseline.json
+
+# Show baseline diff metadata (new/resolved/unchanged)
+vyper-guard analyze contracts/ --format json \
+  --baseline-file .guardian-baseline.json --baseline-diff
+
+# Refresh baseline fingerprints from current scan results
+vyper-guard analyze contracts/ --format json \
+  --baseline-file .guardian-baseline.json --update-baseline
+```
+
+Notes:
+
+- Directory mode currently aggregates analysis results only.
+- `--fix` and `--fix-dry-run` are single-file only.
+- AI triage metadata is currently applied in single-file mode.
 
 Security notes:
 
@@ -131,6 +191,34 @@ vyper-guard analyze contract.vy --ci
 vyper-guard analyze contract.vy --ci --severity-threshold HIGH
 
 # If --severity-threshold is omitted, the default comes from .guardianrc (analysis.severity_threshold)
+```
+
+### GitHub Code Scanning (SARIF)
+
+```yaml
+name: security-scan
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  vyper-guard-sarif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.12
+      - run: uv sync --dev
+      - run: uv run vyper-guard analyze test_contracts --format sarif --output vyper-guard.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: vyper-guard.sarif
 ```
 
 ## Auto-Remediation (`--fix`)

@@ -125,6 +125,14 @@ def forward(target: address, data: Bytes[1024]):
     raw_call(target, data)
 """
 
+UNSAFE_MATH_CONTRACT = """\
+# pragma version ^0.4.0
+
+@external
+def add_fast(a: uint256, b: uint256) -> uint256:
+    return unsafe_add(a, b)
+"""
+
 SELFDESTRUCT_CONTRACT = """\
 # pragma version ^0.3.10
 
@@ -191,19 +199,20 @@ class TestFixMissingNonreentrant:
 
 
 class TestFixUnsafeRawCall:
-    def test_raw_call_wrapped_in_assert(self) -> None:
+    def test_raw_call_rewritten_to_response_check(self) -> None:
         _, results, patched = _analyze_and_fix(RAW_CALL_CONTRACT)
         fix = _has_fix_for(results, "unsafe_raw_call")
         assert fix is not None, (
             f"Expected raw_call fix. Fixes: {[r.finding.detector_name for r in results]}"
         )
-        assert "assert" in patched.lower() or "assert raw_call" in patched
+        assert "max_outsize=32" in patched
+        assert "assert convert(" in patched
 
-    def test_diff_shows_assert(self) -> None:
+    def test_diff_shows_response_validation(self) -> None:
         _, results, _ = _analyze_and_fix(RAW_CALL_CONTRACT)
         fix = _has_fix_for(results, "unsafe_raw_call")
         if fix:
-            assert "assert" in fix.diff
+            assert "assert convert(" in fix.diff
 
     def test_raw_call_fix_is_tier_a(self) -> None:
         _, results, _ = _analyze_and_fix(RAW_CALL_CONTRACT)
@@ -382,6 +391,15 @@ class TestFixCompilerVersion:
             f"Expected pragma fix. Fixes: {[r.finding.detector_name for r in results]}"
         )
         assert "0.4.0" in patched
+
+
+class TestFixIntegerOverflow:
+    def test_unsafe_add_rewritten_to_safe_arithmetic(self) -> None:
+        _, results, patched = _analyze_and_fix(UNSAFE_MATH_CONTRACT)
+        fix = _has_fix_for(results, "integer_overflow")
+        assert fix is not None
+        assert "unsafe_add" not in patched
+        assert "return (a + b)" in patched
 
 
 # ---------------------------------------------------------------------------

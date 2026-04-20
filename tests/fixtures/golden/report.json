@@ -3,7 +3,7 @@
   "tool": {
     "name": "vyper-guard",
     "version": "<VERSION>",
-    "url": "https://github.com/preethamak/vyper"
+    "url": "https://deepwiki.com/preethamak/vyper"
   },
   "environment": {
     "python": "<PYTHON>",

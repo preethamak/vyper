@@ -39,8 +39,8 @@ _PRAGMA_RE = re.compile(
 # Decorator line:  @external, @nonreentrant, etc.
 _DECORATOR_RE = re.compile(r"^@(\w+)(?:\(.*\))?$")
 
-# Function definition:  def foo(x: uint256) -> bool:
-_FUNCDEF_RE = re.compile(r"^def\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*(.+?))?\s*:\s*$")
+# Function definition fast-path (simple signatures).
+_FUNCDEF_RE = re.compile(r"^def\s+(\w+)\s*\((.*)\)\s*(?:->\s*(.+?))?\s*:\s*$")
 
 # Event declaration:  event Transfer:
 _EVENT_RE = re.compile(r"^event\s+(\w+)\s*:\s*$")
@@ -227,10 +227,10 @@ def _parse_function(start_idx: int, lines: list[str]) -> tuple[FunctionInfo | No
 
     # Expect ``def ...():`` — possibly spanning multiple lines
     stripped = lines[idx].strip()
-    m = _FUNCDEF_RE.match(stripped)
+    header = _parse_function_header(stripped)
     def_end_idx = idx
 
-    if not m and stripped.startswith("def "):
+    if header is None and stripped.startswith("def "):
         # Multi-line function definition: join lines until ':' closes the header.
         # Stop at next top-level declaration to avoid over-consuming unrelated code.
         combined_parts = [stripped]
@@ -243,18 +243,16 @@ def _parse_function(start_idx: int, lines: list[str]) -> tuple[FunctionInfo | No
                 break
             combined_parts.append(next_line)
             normalized = re.sub(r"\s+", " ", " ".join(combined_parts))
-            m = _FUNCDEF_RE.match(normalized)
-            if m:
+            header = _parse_function_header(normalized)
+            if header is not None:
                 def_end_idx = peek
                 break
 
-    if not m:
+    if header is None:
         # Not a valid function — skip.
         return None, idx + 1
 
-    name = m.group(1)
-    args = m.group(2).strip()
-    return_type = m.group(3).strip() if m.group(3) else None
+    name, args, return_type = header
     idx = def_end_idx + 1
 
     # Collect body (indented lines)
@@ -293,6 +291,61 @@ def _parse_function(start_idx: int, lines: list[str]) -> tuple[FunctionInfo | No
         ),
         idx,
     )
+
+
+def _parse_function_header(line: str) -> tuple[str, str, str | None] | None:
+    """Parse a normalized function header line.
+
+    Supports nested parentheses in argument defaults, e.g.
+    ``def foo(x: uint256 = convert(0, uint256)) -> bool:``.
+    """
+    s = line.strip()
+    if not s.startswith("def "):
+        return None
+
+    i = 4
+    while i < len(s) and s[i].isspace():
+        i += 1
+    name_start = i
+    while i < len(s) and (s[i].isalnum() or s[i] == "_"):
+        i += 1
+    name = s[name_start:i]
+    if not name:
+        return None
+
+    while i < len(s) and s[i].isspace():
+        i += 1
+    if i >= len(s) or s[i] != "(":
+        return None
+
+    open_idx = i
+    depth = 0
+    close_idx = -1
+    for j in range(open_idx, len(s)):
+        ch = s[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                close_idx = j
+                break
+    if close_idx == -1:
+        return None
+
+    args = s[open_idx + 1 : close_idx].strip()
+    rest = s[close_idx + 1 :].strip()
+    if not rest.endswith(":"):
+        return None
+    rest = rest[:-1].strip()
+
+    return_type: str | None = None
+    if rest:
+        if not rest.startswith("->"):
+            return None
+        return_type = rest[2:].strip() or None
+
+    return name, args, return_type
 
 
 def _try_parse_state_variable(stripped: str, line_number: int) -> StateVariableInfo | None:

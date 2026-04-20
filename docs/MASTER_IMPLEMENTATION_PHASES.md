@@ -9,6 +9,18 @@ Mode: Active implementation (phase-gated)
 - Active phase: Phase 5 — Remediation Safety + Validation (kickoff)
 - State: In progress
 - Completed in this tranche:
+  - Added premium-gated `audit` command while preserving existing free CLI command behavior
+  - Added premium entitlement config/env surface (`premium.*`, `GUARDIAN_PREMIUM_*`)
+  - Added CLI tests for audit entitlement denial and successful premium execution
+  - Added finding baseline suppression support to `analyze` via `--baseline-file`
+  - Added baseline generation/update flow via `--update-baseline` for both single-file and directory analysis
+  - Added baseline-aware CI behavior so suppressed findings do not fail `--ci`
+  - Added baseline diff mode (`--baseline-diff`) with new/resolved/unchanged metadata in JSON/Markdown/SARIF outputs
+  - Added SARIF exporter (`sarif_exporter.py`) and SARIF output format support in `analyze` and `analyze-address`
+  - Added SARIF exporter tests and CLI SARIF regression tests
+  - Added project/directory analysis mode for `analyze <directory>` with recursive `*.vy` scanning
+  - Added aggregated project outputs for CLI/JSON/Markdown/SARIF and directory-level CI exit behavior
+  - Added GitHub Actions SARIF upload pipeline in CI workflow (`security-events: write` + upload step)
   - Lightweight metadata loading checks added for bundled JSON files
   - Added a lightweight `benchmark` command and corpus benchmark runner for quality tracking
   - Added benchmark JSON contract test for output schema and metrics fields

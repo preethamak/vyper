@@ -165,23 +165,44 @@ def _fix_missing_nonreentrant(gen: FixGenerator, finding: DetectorResult) -> Fix
     if func is None:
         return FixResult(finding=finding, description="Cannot locate function.", applied=False)
 
-    # Find the first decorator line of this function
-    top_line = func.start_line  # 1-based, points to first decorator or def
-    idx = top_line - 1  # 0-based
-    indent = _get_indent(gen._original[idx])
+    # Prefer placing @nonreentrant immediately after @external to follow
+    # common Vyper ordering conventions.
+    top_line = func.start_line  # 1-based
+    def_line = top_line
+    for ln in range(top_line, min(func.end_line, len(gen._original)) + 1):
+        if gen._original[ln - 1].strip().startswith("def "):
+            def_line = ln
+            break
+
+    insert_after = top_line - 1
+    for ln in range(top_line, def_line):
+        if gen._original[ln - 1].strip().startswith("@external"):
+            insert_after = ln
+            break
+
+    insert_line = insert_after + 1
+    idx = insert_line - 1
+    indent = _get_indent(gen._original[max(top_line - 1, 0)])
     new_line = f"{indent}@nonreentrant"
+
+    if insert_after >= top_line:
+        patched_lines = [gen._original[insert_line - 1], new_line]
+        preview_insert_idx = idx + 1
+    else:
+        patched_lines = [new_line, gen._original[insert_line - 1]]
+        preview_insert_idx = idx
 
     gen._patcher.add_patch(
         Patch(
-            start_line=top_line,
-            end_line=top_line,
-            new_lines=[new_line, gen._original[idx]],
-            description=f"Add @nonreentrant before {func.name}()",
+            start_line=insert_line,
+            end_line=insert_line,
+            new_lines=patched_lines,
+            description=f"Add @nonreentrant to {func.name}()",
         )
     )
 
     preview = list(gen._original)
-    preview.insert(idx, new_line)
+    preview.insert(preview_insert_idx, new_line)
     diff = gen._make_diff(preview, gen._contract.file_path)
 
     return FixResult(
@@ -194,7 +215,7 @@ def _fix_missing_nonreentrant(gen: FixGenerator, finding: DetectorResult) -> Fix
 
 
 def _fix_unsafe_raw_call(gen: FixGenerator, finding: DetectorResult) -> FixResult:
-    """Wrap raw_call(...) in assert raw_call(...)."""
+    """Rewrite unchecked raw_call into a Vyper-safe response-check pattern."""
     if finding.line_number is None:
         return FixResult(finding=finding, description="No line number.", applied=False)
 
@@ -214,24 +235,42 @@ def _fix_unsafe_raw_call(gen: FixGenerator, finding: DetectorResult) -> FixResul
             applied=False,
         )
 
+    # Only patch standalone raw_call statements; assignment/multi-line cases
+    # require manual review to avoid changing contract semantics.
+    if not stripped.startswith("raw_call("):
+        return FixResult(
+            finding=finding,
+            description="Non-standalone raw_call — manual fix needed.",
+            applied=False,
+        )
+
     indent = _get_indent(original_line)
-    new_text = f"{indent}assert {stripped}"
+    raw_expr = _ensure_raw_call_max_outsize(stripped, 32)
+    response_var = _next_response_var_name(gen._original, base="_response")
+    new_lines = [
+        f"{indent}{response_var}: Bytes[32] = {raw_expr}",
+        f"{indent}if len({response_var}) > 0:",
+        f"{indent}    assert convert({response_var}, bool)",
+    ]
     gen._patcher.add_patch(
         Patch(
             start_line=finding.line_number,
             end_line=finding.line_number,
-            new_lines=[new_text],
-            description="Wrap raw_call in assert",
+            new_lines=new_lines,
+            description="Rewrite raw_call with response check",
         )
     )
 
     preview = list(gen._original)
-    preview[idx] = _get_indent(original_line) + "assert " + stripped
+    preview[idx : idx + 1] = new_lines
     diff = gen._make_diff(preview, gen._contract.file_path)
 
     return FixResult(
         finding=finding,
-        description="Wrapped ``raw_call()`` in ``assert`` to check return value.",
+        description=(
+            "Rewrote ``raw_call()`` to capture response bytes and assert "
+            "``convert(response, bool)`` when data is returned."
+        ),
         applied=True,
         diff=diff,
         patched_lines=preview,
@@ -307,7 +346,7 @@ def _fix_missing_event(gen: FixGenerator, finding: DetectorResult) -> FixResult:
         preview.insert(insert_after + j, el)
     # Insert log (after event insertion shifted lines)
     shift = len(event_lines)
-    preview.insert(body_end - 1 + shift + 1, log_line)
+    preview.insert(body_end + shift, log_line)
     diff = gen._make_diff(preview, gen._contract.file_path)
 
     return FixResult(
@@ -480,28 +519,39 @@ def _fix_unchecked_subtraction(gen: FixGenerator, finding: DetectorResult) -> Fi
 
 
 def _fix_integer_overflow(gen: FixGenerator, finding: DetectorResult) -> FixResult:
-    """Upgrade pragma to ^0.4.0."""
+    """Replace unsafe_* arithmetic helpers with safe infix operators."""
     if finding.line_number is None:
         return FixResult(finding=finding, description="No line number.", applied=False)
 
     idx = finding.line_number - 1
-    new_pragma = "# pragma version ^0.4.0"
+    if idx >= len(gen._original):
+        return FixResult(finding=finding, description="Line out of range.", applied=False)
+
+    original_line = gen._original[idx]
+    replaced_line = _rewrite_unsafe_math_calls(original_line)
+    if replaced_line == original_line:
+        return FixResult(
+            finding=finding,
+            description="Could not safely rewrite unsafe arithmetic call.",
+            applied=False,
+        )
+
     gen._patcher.add_patch(
         Patch(
             start_line=finding.line_number,
             end_line=finding.line_number,
-            new_lines=[new_pragma],
-            description="Upgrade pragma version",
+            new_lines=[replaced_line],
+            description="Replace unsafe_* arithmetic with safe operators",
         )
     )
 
     preview = list(gen._original)
-    preview[idx] = new_pragma
+    preview[idx] = replaced_line
     diff = gen._make_diff(preview, gen._contract.file_path)
 
     return FixResult(
         finding=finding,
-        description=f"Upgraded pragma to ``{new_pragma}``.",
+        description="Replaced ``unsafe_*`` arithmetic with safe infix arithmetic.",
         applied=True,
         diff=diff,
         patched_lines=preview,
@@ -509,8 +559,48 @@ def _fix_integer_overflow(gen: FixGenerator, finding: DetectorResult) -> FixResu
 
 
 def _fix_compiler_version(gen: FixGenerator, finding: DetectorResult) -> FixResult:
-    """Same as integer overflow — upgrade pragma."""
-    return _fix_integer_overflow(gen, finding)
+    """Upgrade/add pragma to a safe compiler pin."""
+    pragma_line = 1
+    for i, line in enumerate(gen._original, start=1):
+        lowered = line.strip().lower()
+        if lowered.startswith("# pragma version") or lowered.startswith("#pragma version"):
+            pragma_line = i
+            break
+        if lowered.startswith("# @pragma") or lowered.startswith("# @version"):
+            pragma_line = i
+            break
+
+    new_pragma = "# pragma version ^0.4.0"
+    if 1 <= pragma_line <= len(gen._original):
+        gen._patcher.add_patch(
+            Patch(
+                start_line=pragma_line,
+                end_line=pragma_line,
+                new_lines=[new_pragma],
+                description="Upgrade pragma version",
+            )
+        )
+        preview = list(gen._original)
+        preview[pragma_line - 1] = new_pragma
+    else:
+        gen._patcher.add_patch(
+            Patch(
+                start_line=1,
+                end_line=1,
+                new_lines=[new_pragma, gen._original[0]] if gen._original else [new_pragma],
+                description="Insert pragma version",
+            )
+        )
+        preview = [new_pragma, *gen._original]
+
+    diff = gen._make_diff(preview, gen._contract.file_path)
+    return FixResult(
+        finding=finding,
+        description=f"Upgraded pragma to ``{new_pragma}``.",
+        applied=True,
+        diff=diff,
+        patched_lines=preview,
+    )
 
 
 def _fix_timestamp_dependence(gen: FixGenerator, finding: DetectorResult) -> FixResult:
@@ -551,7 +641,7 @@ def _fix_dangerous_delegatecall(gen: FixGenerator, finding: DetectorResult) -> F
 
     # Check if access control already exists
     body = func.body_text
-    if re.search(r"\b(assert|require)\s+.*\bmsg\.sender\b", body):
+    if re.search(r"\bassert\s+.*\bmsg\.sender\b", body):
         return FixResult(
             finding=finding,
             description="Access control already present — no auto-fix needed.",
@@ -735,6 +825,98 @@ def validate_remediation_policy() -> list[str]:
 
 def _get_indent(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
+
+
+def _next_response_var_name(lines: list[str], base: str = "_response") -> str:
+    """Return a response variable name that does not collide with source text."""
+    joined = "\n".join(lines)
+    if base not in joined:
+        return base
+    i = 2
+    while f"{base}_{i}" in joined:
+        i += 1
+    return f"{base}_{i}"
+
+
+def _ensure_raw_call_max_outsize(raw_expr: str, outsize: int) -> str:
+    """Ensure raw_call expression includes ``max_outsize``."""
+    if "max_outsize" in raw_expr:
+        return raw_expr
+    close = raw_expr.rfind(")")
+    if close == -1:
+        return raw_expr
+    before = raw_expr[:close].rstrip()
+    suffix = ", " if not before.endswith("(") else ""
+    return f"{before}{suffix}max_outsize={outsize}{raw_expr[close:]}"
+
+
+def _find_matching_paren(text: str, open_idx: int) -> int:
+    """Return index of matching ')' for '(' at *open_idx*, or -1."""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _split_top_level_args(args: str) -> list[str]:
+    """Split argument list by top-level commas (ignoring nested parentheses)."""
+    out: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in args:
+        if ch == "(":
+            depth += 1
+            cur.append(ch)
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            cur.append(ch)
+            continue
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    tail = "".join(cur).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _rewrite_unsafe_math_calls(line: str) -> str:
+    """Rewrite unsafe_add/sub/mul/div calls on a line to safe infix operators."""
+    op_map = {"add": "+", "sub": "-", "mul": "*", "div": "/"}
+    cursor = 0
+    result = line
+
+    while True:
+        m = re.search(r"\bunsafe_(add|sub|mul|div)\s*\(", result[cursor:])
+        if not m:
+            break
+        start = cursor + m.start()
+        open_idx = cursor + m.end() - 1
+        close_idx = _find_matching_paren(result, open_idx)
+        if close_idx == -1:
+            break
+
+        kind = m.group(1)
+        args = result[open_idx + 1 : close_idx]
+        parts = _split_top_level_args(args)
+        if len(parts) != 2:
+            cursor = close_idx + 1
+            continue
+
+        replacement = f"({parts[0]} {op_map[kind]} {parts[1]})"
+        result = f"{result[:start]}{replacement}{result[close_idx + 1 :]}"
+        cursor = start + len(replacement)
+
+    return result
 
 
 def _camel_case(snake: str) -> str:

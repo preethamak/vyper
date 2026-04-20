@@ -5,7 +5,7 @@ import json
 from typer.testing import CliRunner
 
 from guardian.cli import app
-from guardian.explorer.client import ExplorerResponse
+from guardian.explorer.client import ExplorerError, ExplorerResponse
 
 runner = CliRunner()
 
@@ -37,7 +37,7 @@ def test_analyze_address_json_output(monkeypatch) -> None:
     assert "summary" in payload
 
 
-def test_analyze_address_requires_verified_source(monkeypatch) -> None:
+def test_analyze_address_unverified_source_falls_back_to_stub(monkeypatch) -> None:
     def _fake_fetch(self, address: str):
         return ExplorerResponse(
             address=address,
@@ -58,7 +58,13 @@ def test_analyze_address_requires_verified_source(monkeypatch) -> None:
 
     result = runner.invoke(app, ["analyze-address", "0x123", "--format", "json"])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["file_path"] == "explorer://ethereum/0x123"
+    assert payload["summary"]["info"] >= 1
+    assert any(f["detector"] == "explorer_source_unavailable" for f in payload["findings"])
+    assert payload["analysis_context"]["source_available"] is False
+    assert payload["analysis_context"]["stats"]["abi_entries"] == 0
 
 
 def test_analyze_address_ai_alias_uses_llm_when_configured(monkeypatch) -> None:
@@ -118,3 +124,102 @@ def test_analyze_address_ai_alias_uses_llm_when_configured(monkeypatch) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ai_triage_policy"]["deterministic"] is False
+
+
+def test_analyze_address_timeout_degrades_to_metadata_stub(monkeypatch) -> None:
+    def _fake_fetch(self, address: str):
+        raise ExplorerError(
+            "Explorer request failed: HTTPSConnectionPool(host='api.etherscan.io', port=443): "
+            "Read timed out. (read timeout=25.0)"
+        )
+
+    monkeypatch.setattr("guardian.explorer.client.ExplorerClient.fetch_contract", _fake_fetch)
+
+    result = runner.invoke(app, ["analyze-address", "0x123", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["file_path"] == "explorer://ethereum/0x123"
+    assert any(f["detector"] == "explorer_source_unavailable" for f in payload["findings"])
+
+
+def test_analyze_address_cli_output_includes_explorer_summary(monkeypatch) -> None:
+    def _fake_fetch(self, address: str):
+        return ExplorerResponse(
+            address=address,
+            network="ethereum",
+            source_code="pragma solidity ^0.8.0; contract Ping { function ping() external pure returns (bool) { return true; } }",
+            abi=[{"type": "function", "name": "ping", "stateMutability": "pure"}],
+            contract_name="Ping",
+            compiler_version="^0.8.0",
+            optimization_used=True,
+            runs=200,
+            is_proxy=False,
+            implementation=None,
+            function_names=["ping"],
+            raw={},
+        )
+
+    monkeypatch.setattr("guardian.explorer.client.ExplorerClient.fetch_contract", _fake_fetch)
+
+    result = runner.invoke(app, ["analyze-address", "0x123"])
+
+    assert result.exit_code == 0
+    output = result.output
+    assert "Explorer Stats" in output
+    assert "Source Language" in output
+    assert "solidity" in output
+    assert "ABI entries" in output
+    assert "Non-Vyper source detected" in output
+
+
+def test_analyze_address_supports_sarif_output(monkeypatch) -> None:
+    def _fake_fetch(self, address: str):
+        return ExplorerResponse(
+            address=address,
+            network="ethereum",
+            source_code="# pragma version ^0.4.0\n@external\ndef ping() -> bool:\n    return True\n",
+            abi=[{"type": "function", "name": "ping"}],
+            contract_name="Ping",
+            compiler_version="^0.4.0",
+            optimization_used=True,
+            runs=200,
+            is_proxy=False,
+            implementation=None,
+            function_names=["ping"],
+            raw={},
+        )
+
+    monkeypatch.setattr("guardian.explorer.client.ExplorerClient.fetch_contract", _fake_fetch)
+
+    result = runner.invoke(app, ["analyze-address", "0x123", "--format", "sarif"])
+
+    assert result.exit_code == 0
+    assert '"version": "2.1.0"' in result.output
+    assert '"runs": [' in result.output
+
+
+def test_analyze_address_supports_html_output(monkeypatch) -> None:
+    def _fake_fetch(self, address: str):
+        return ExplorerResponse(
+            address=address,
+            network="ethereum",
+            source_code="# pragma version ^0.4.0\n@external\ndef ping() -> bool:\n    return True\n",
+            abi=[{"type": "function", "name": "ping"}],
+            contract_name="Ping",
+            compiler_version="^0.4.0",
+            optimization_used=True,
+            runs=200,
+            is_proxy=False,
+            implementation=None,
+            function_names=["ping"],
+            raw={},
+        )
+
+    monkeypatch.setattr("guardian.explorer.client.ExplorerClient.fetch_contract", _fake_fetch)
+
+    result = runner.invoke(app, ["analyze-address", "0x123", "--format", "html"])
+
+    assert result.exit_code == 0
+    assert "<!doctype html>" in result.output
+    assert "Vyper Guard Security Report" in result.output

@@ -55,13 +55,13 @@ def test_known_issues_align_with_compiler_check_advisories() -> None:
         assert by_cve[advisory]["severity"] == severity.value
 
 
-def test_detector_docs_scoring_matches_runtime_model() -> None:
-    text = _read("docs/DETECTORS.md")
+def test_readme_scoring_matches_runtime_model() -> None:
+    text = _read("README.md")
 
     points = {
         sev: int(val)
         for sev, val in re.findall(
-            r"\|\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO)\s*\|\s*(-?\d+)\s*\|", text
+            r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO):\s*(-?\d+)\s*point[s]?", text
         )
     }
     assert points == {sev.value: -sev.score_penalty for sev in Severity}
@@ -69,7 +69,8 @@ def test_detector_docs_scoring_matches_runtime_model() -> None:
     caps = {
         sev: int(val)
         for sev, val in re.findall(
-            r"-\s*(CRITICAL|HIGH|MEDIUM|LOW|INFO) max deduction:\s*(\d+)", text
+            r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO):\s*-?\d+\s*point[s]?\s*\(capped at\s*-?(\d+)\)",
+            text,
         )
     }
     assert caps == {sev.value: _TIER_CAPS[sev] for sev in Severity}
@@ -99,13 +100,11 @@ def test_ai_triage_scoring_version_is_explicit_and_stable() -> None:
     assert SCORING_VERSION == "triage_scoring_v1"
 
 
-def test_changelog_contains_latest_phase4_governance_notes() -> None:
-    changelog = _read("docs/CHANGELOG.md")
+def test_readme_mentions_governance_related_triage_notes() -> None:
+    readme = _read("README.md")
 
-    assert "## 2026-03-22" in changelog
-    assert "AI-assisted triage" in changelog
-    assert "ai_triage_policy" in changelog
-    assert "deprecated-policy" in changelog
+    assert "AI advisory triage" in readme
+    assert "--allow-ai-fallback" in readme
 
 
 def test_remediation_policy_contract_is_versioned_and_valid() -> None:

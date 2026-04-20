@@ -142,7 +142,9 @@ _EXTERNAL_CALL_RE = re.compile(
 _INTERFACE_CALL_RE = re.compile(r"\b[A-Za-z_]\w*\s*\([^()\n]*\)\s*\.\s*[A-Za-z_]\w*\s*\(")
 # Matches state mutations (self.xxx = ..., self.xxx[key] = ..., self.xxx[k].field = ...).
 # Includes augmented assignments: +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
-_STATE_WRITE_RE = re.compile(r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*(?:(?:<<|>>|[+\-*/%&|^])?=)")
+_STATE_WRITE_RE = re.compile(
+    r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*(?:(?:<<|>>|[+\-*/%&|^])?=)(?!=)"
+)
 # DynArray / mutable container operations that mutate state.
 _STATE_MUTATION_CALL_RE = re.compile(
     r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\.(append|pop|remove|clear|extend|insert)\s*\("
@@ -151,7 +153,7 @@ _STATE_MUTATION_CALL_RE = re.compile(
 _LOG_RE = re.compile(r"\blog\s+\w+")
 # Access-control assertion pattern (strict owner/admin equality).
 _ACCESS_CONTROL_RE = re.compile(
-    r"\b(?:assert|require)\b\s+"
+    r"\bassert\b\s+"
     r"(?:msg\.sender\s*==\s*self\.[A-Za-z_]\w*|self\.[A-Za-z_]\w*\s*==\s*msg\.sender)\b"
 )
 # Timestamp usage in conditional.
@@ -184,8 +186,8 @@ def _strip_inline_comment(line: str) -> str:
 
 # Strict owner-gate: msg.sender == self.<owner> (NOT balance lookups).
 _STRICT_ACL_RE = re.compile(
-    r"\b(?:assert|require)\b\s+msg\.sender\s*==\s*self\.[A-Za-z_]\w+"
-    r"|\b(?:assert|require)\b\s+self\.[A-Za-z_]\w+\s*==\s*msg\.sender"
+    r"\bassert\b\s+msg\.sender\s*==\s*self\.[A-Za-z_]\w+"
+    r"|\bassert\b\s+self\.[A-Za-z_]\w+\s*==\s*msg\.sender"
 )
 
 
@@ -222,6 +224,18 @@ class MissingNonreentrantDetector(BaseDetector):
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         semantic = build_semantic_summary(contract)
         results: list[DetectorResult] = []
+
+        def _contract_has_external_call_surface(exclude_name: str) -> bool:
+            for f in contract.functions:
+                if f.name == exclude_name:
+                    continue
+                sem = semantic.functions.get(f.name)
+                if sem is not None and sem.external_calls > 0:
+                    return True
+                if any(_is_external_call_line(line) for line in f.body_lines):
+                    return True
+            return False
+
         for func in contract.functions:
             if func.name in _CONSTRUCTOR_NAMES:
                 continue
@@ -296,6 +310,8 @@ class MissingNonreentrantDetector(BaseDetector):
                 # NOT for balance lookups like self.balances[msg.sender]
                 if _STRICT_ACL_RE.search(body):
                     continue  # owner-only state writes are acceptable
+                if not _contract_has_external_call_surface(func.name):
+                    continue
                 results.append(
                     self._make_result(
                         title=f"Missing @nonreentrant on {func.name}()",
@@ -464,7 +480,7 @@ class MissingEventEmissionDetector(BaseDetector):
                 continue
 
             body = func.body_text
-            has_state_write = bool(fn_sem.state_writes) or bool(_STATE_WRITE_RE.search(body))
+            has_state_write = any(_is_state_write_line(line) for line in func.body_lines)
             has_event = fn_sem.emits_event or bool(_LOG_RE.search(body))
             if has_state_write and not has_event:
                 results.append(
@@ -747,7 +763,7 @@ class UnprotectedStateChangeDetector(BaseDetector):
         r"\bself\.(owner|admin|governance|paused|is_paused|pending_owner|"
         r"fee_recipient|minter|operator|controller|guardian|"
         r"total_supply|supply|total_shares|total_staked|total_deposited)"
-        r"(?:\[.*?\])*\s*[+\-*]?="
+        r"(?:\[.*?\])*\s*[+\-*]?=(?!=)"
     )
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
@@ -762,11 +778,6 @@ class UnprotectedStateChangeDetector(BaseDetector):
                 continue
             if func.is_view or func.is_pure:
                 continue
-            # @payable functions (e.g. deposit()) are intentionally
-            # public-facing — writing to accounting state is expected.
-            if func.is_payable:
-                continue
-
             fn_sem = semantic.functions.get(func.name)
             if fn_sem is None or not fn_sem.state_writes:
                 continue
@@ -842,16 +853,9 @@ class SendInLoopDetector(BaseDetector):
                         val_match = re.search(r"=\s*(\d+)", src_line)
                         if val_match and int(val_match.group(1)) <= self._SMALL_LOOP_THRESHOLD:
                             return True
-        # Common well-known small constants in DeFi
-        return bound.upper() in (
-            "N_COINS",
-            "MAX_COINS",
-            "N_TOKENS",
-            "MAX_TOKENS",
-            "N_ASSETS",
-            "POOL_SIZE",
-            "N_UNDERLYING",
-        )
+        # Unknown symbolic bounds are treated as untrusted unless we can
+        # resolve a concrete small constant from source.
+        return False
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         semantic = build_semantic_summary(contract)
@@ -944,7 +948,7 @@ class UncheckedSubtractionDetector(BaseDetector):
     # self.balances[msg.sender] -= amount   or   self.counter -= 1
     _SUB_RE = re.compile(r"\bself\.(\w+)(?:\[.*?\])*\s*-=\s*(\w+)")
     # assert self.balances[msg.sender] >= amount
-    _CHECK_TEMPLATE = re.compile(r"\b(assert|require)\b.*\bself\.{var}(?:\[.*?\])*\s*>=\s*{rhs}")
+    _CHECK_TEMPLATE = re.compile(r"\bassert\b.*\bself\.{var}(?:\[.*?\])*\s*>=\s*{rhs}")
 
     # Matches: amount = share_amount * self.total_assets / self.total_shares
     # => amount is a bounded fraction of self.total_assets (amount <= total_assets)
@@ -979,7 +983,7 @@ class UncheckedSubtractionDetector(BaseDetector):
                 rhs = m.group(2)
                 # Build a regex to see if there's a matching assert above
                 check_re = re.compile(
-                    rf"\b(assert|require)\b.*\bself\.{re.escape(var_name)}"
+                    rf"\bassert\b.*\bself\.{re.escape(var_name)}"
                     rf"(?:\[.*?\])*\s*>=\s*{re.escape(rhs)}\b"
                 )
                 # Look only at the body text BEFORE the subtraction
@@ -1078,6 +1082,7 @@ class CEIViolationDetector(BaseDetector):
                 continue
             for call_idx, call_line in violations:
                 abs_line = func.end_line - len(func.body_lines) + 1 + call_idx
+                is_guarded = func.is_nonreentrant
                 results.append(
                     self._make_result(
                         title=f"CEI violation in {func.name}()",
@@ -1088,8 +1093,15 @@ class CEIViolationDetector(BaseDetector):
                             f"re-enter the function before the state is "
                             f"updated. Move all state changes above the "
                             f"external call (Checks → Effects → Interactions)."
+                            + (
+                                " ``@nonreentrant`` is present, so this is "
+                                "reported as a lower-severity hygiene issue."
+                                if is_guarded
+                                else ""
+                            )
                         ),
-                        confidence=Confidence.HIGH,
+                        confidence=Confidence.MEDIUM if is_guarded else Confidence.HIGH,
+                        severity=Severity.LOW if is_guarded else self.SEVERITY,
                         line_number=abs_line,
                         source_snippet=_excerpt(contract, func),
                         fix_suggestion=(

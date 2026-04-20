@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   lint:
@@ -67,3 +68,23 @@ jobs:
       - name: Mypy
         run: uv run mypy src/guardian/ --ignore-missing-imports
         continue-on-error: true
+
+  security-sarif:
+    name: Security SARIF Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Generate Vyper Guard SARIF report
+        run: |
+          uv run vyper-guard analyze test_contracts --format sarif --output vyper-guard.sarif
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: vyper-guard.sarif

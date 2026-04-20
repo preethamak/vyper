@@ -37,6 +37,8 @@ def test_explorer_json_output_contains_contract_metadata(monkeypatch) -> None:
     assert payload["contract_name"] == "Ping"
     assert payload["function_names"] == ["ping"]
     assert payload["provider"] == "blockscout"
+    assert payload["explorer"]["source_language"] == "vyper"
+    assert payload["explorer"]["stats"]["function_count"] == 1
 
 
 def test_explorer_rejects_invalid_private_key() -> None:

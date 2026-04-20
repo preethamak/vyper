@@ -7,6 +7,7 @@ Supports provider-specific lookups and automatic fallback across:
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +44,17 @@ _ETHERSCAN_API_BY_NETWORK: dict[str, str] = {
     "arbitrum": "https://api.arbiscan.io/api",
     "optimism": "https://api-optimistic.etherscan.io/api",
     "base": "https://api.basescan.org/api",
+}
+
+_ETHERSCAN_V2_ENDPOINT = "https://api.etherscan.io/v2/api"
+
+_CHAIN_ID_BY_NETWORK: dict[str, int] = {
+    "ethereum": 1,
+    "sepolia": 11155111,
+    "polygon": 137,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "base": 8453,
 }
 
 _BLOCKSCOUT_API_BY_NETWORK: dict[str, str] = {
@@ -105,35 +117,105 @@ class ExplorerClient:
     def fetch_contract(self, address: str) -> ExplorerResponse:
         """Fetch verified contract source + ABI metadata for an address."""
         failures: list[str] = []
+        metadata_only: ExplorerResponse | None = None
         for provider in self.providers:
             try:
                 response = self._fetch_from_provider(provider, address)
                 if response.source_code:
                     return response
+                if metadata_only is None:
+                    metadata_only = response
                 failures.append(f"{provider}: verified source unavailable")
             except ExplorerError as exc:
                 failures.append(f"{provider}: {exc}")
+
+        if metadata_only is not None:
+            return metadata_only
 
         details = "; ".join(failures) if failures else "no providers attempted"
         raise ExplorerError(f"Explorer lookup failed across providers: {details}")
 
     def _fetch_from_provider(self, provider: str, address: str) -> ExplorerResponse:
         if provider == "etherscan":
-            endpoint = _ETHERSCAN_API_BY_NETWORK.get(self.network)
-            if not endpoint:
+            chain_id = _CHAIN_ID_BY_NETWORK.get(self.network)
+            if chain_id is None:
                 raise ExplorerError(f"Network '{self.network}' is not supported by etherscan")
-            return self._fetch_etherscan_like(provider, endpoint, address)
+            return self._fetch_etherscan_v2(provider, chain_id, address)
         if provider == "blockscout":
             endpoint = _BLOCKSCOUT_API_BY_NETWORK.get(self.network)
             if not endpoint:
                 raise ExplorerError(f"Network '{self.network}' is not supported by blockscout")
             return self._fetch_etherscan_like(provider, endpoint, address)
         if provider == "sourcify":
-            chain_id = _SOURCIFY_CHAIN_ID_BY_NETWORK.get(self.network)
-            if chain_id is None:
+            sourcify_chain_id = _SOURCIFY_CHAIN_ID_BY_NETWORK.get(self.network)
+            if sourcify_chain_id is None:
                 raise ExplorerError(f"Network '{self.network}' is not supported by sourcify")
-            return self._fetch_sourcify(chain_id, address)
+            return self._fetch_sourcify(sourcify_chain_id, address)
         raise ExplorerError(f"Unsupported explorer provider: {provider}")
+
+    def _fetch_etherscan_v2(self, provider: str, chain_id: int, address: str) -> ExplorerResponse:
+        source_payload = self._call_endpoint(
+            _ETHERSCAN_V2_ENDPOINT,
+            chainid=str(chain_id),
+            module="contract",
+            action="getsourcecode",
+            address=address,
+        )
+        source_result = self._extract_first_result(source_payload)
+
+        abi: list[dict[str, Any]] | None = None
+        abi_payload: dict[str, Any] | None = None
+        try:
+            abi_payload = self._call_endpoint(
+                _ETHERSCAN_V2_ENDPOINT,
+                chainid=str(chain_id),
+                module="contract",
+                action="getabi",
+                address=address,
+            )
+            abi_raw = self._extract_result_text(abi_payload)
+            loaded = json.loads(abi_raw)
+            if isinstance(loaded, list):
+                abi = [item for item in loaded if isinstance(item, dict)]
+        except Exception:
+            abi = None
+
+        function_names = sorted(
+            {
+                str(item.get("name"))
+                for item in (abi or [])
+                if item.get("type") == "function" and item.get("name")
+            }
+        )
+
+        source_code = (source_result.get("SourceCode") or "").strip() or None
+        contract_name = (source_result.get("ContractName") or "").strip() or None
+        compiler_version = (source_result.get("CompilerVersion") or "").strip() or None
+        optimization_used = self._parse_bool(
+            source_result.get("OptimizationUsed") or source_result.get("OptimizationEnabled")
+        )
+        runs = self._parse_int(source_result.get("Runs") or source_result.get("OptimizationRuns"))
+        is_proxy = self._parse_bool(source_result.get("Proxy"))
+        implementation = (source_result.get("Implementation") or "").strip() or None
+
+        return ExplorerResponse(
+            address=address,
+            network=self.network,
+            source_code=source_code,
+            abi=abi,
+            contract_name=contract_name,
+            compiler_version=compiler_version,
+            optimization_used=optimization_used,
+            runs=runs,
+            is_proxy=is_proxy,
+            implementation=implementation,
+            function_names=function_names,
+            raw={
+                "source": source_payload,
+                "abi": abi_payload,
+            },
+            provider=provider,
+        )
 
     def _fetch_etherscan_like(self, provider: str, endpoint: str, address: str) -> ExplorerResponse:
         source_payload = self._call_endpoint(
@@ -200,9 +282,7 @@ class ExplorerClient:
     def _fetch_sourcify(self, chain_id: int, address: str) -> ExplorerResponse:
         endpoint = f"https://sourcify.dev/server/v2/contract/{chain_id}/{address}?fields=all"
         try:
-            resp = self._session.get(endpoint, timeout=self.timeout)
-            resp.raise_for_status()
-            payload = resp.json()
+            payload = self._get_json_with_retry(endpoint)
         except requests.RequestException as exc:
             raise ExplorerError(f"Explorer request failed: {exc}") from exc
         except ValueError as exc:
@@ -267,9 +347,7 @@ class ExplorerClient:
         query = dict(params)
         query["apikey"] = self.api_key or ""
         try:
-            resp = self._session.get(endpoint, params=query, timeout=self.timeout)
-            resp.raise_for_status()
-            payload = resp.json()
+            payload = self._get_json_with_retry(endpoint, params=query)
         except requests.RequestException as exc:
             raise ExplorerError(f"Explorer request failed: {exc}") from exc
         except ValueError as exc:
@@ -285,6 +363,43 @@ class ExplorerClient:
             raise ExplorerError(f"Explorer error: {message or 'request failed'} ({result})")
 
         return payload
+
+    def _get_json_with_retry(
+        self,
+        endpoint: str,
+        *,
+        params: dict[str, str] | None = None,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        last_error: requests.RequestException | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = self._session.get(endpoint, params=params, timeout=self.timeout)
+                resp.raise_for_status()
+                payload = resp.json()
+                if isinstance(payload, dict):
+                    return payload
+                raise ExplorerError("Explorer response was not a JSON object")
+            except requests.RequestException as exc:
+                last_error = exc
+                is_retryable = isinstance(
+                    exc,
+                    (
+                        requests.ReadTimeout,
+                        requests.ConnectTimeout,
+                        requests.ConnectionError,
+                    ),
+                )
+                if not is_retryable or attempt >= max_attempts:
+                    raise
+                time.sleep(0.4 * attempt)
+            except ValueError:
+                # Non-JSON response; do not retry blindly.
+                raise
+
+        if last_error is not None:
+            raise last_error
+        raise ExplorerError("Explorer request failed without a concrete error")
 
     @staticmethod
     def _resolve_provider_chain(provider: str) -> list[str]:

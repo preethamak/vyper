@@ -70,3 +70,7 @@ artifacts/
 # Generated ad-hoc reports/scratch files
 test_contracts/report*.md
 tests/test_analyzer/# Plan:*.md
+
+# Local AI tooling workspace artifacts
+.codex
+.github/prompts/

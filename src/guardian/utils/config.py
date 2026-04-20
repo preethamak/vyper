@@ -20,7 +20,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 _DEFAULT_CONFIG_NAMES = [".guardianrc", ".guardianrc.yaml", ".guardianrc.yml"]
-_ALLOWED_FORMATS = {"cli", "json", "markdown"}
+_ALLOWED_FORMATS = {"cli", "json", "markdown", "sarif", "html"}
 _ALLOWED_THRESHOLDS = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 _ALLOWED_FIX_TIERS = {"A", "B", "C"}
 
@@ -47,7 +47,7 @@ class AnalysisConfig(BaseModel):
 class ReportingConfig(BaseModel):
     """Settings for output formatting."""
 
-    default_format: str = Field(default="cli", description="cli | json | markdown")
+    default_format: str = Field(default="cli", description="cli | json | markdown | sarif | html")
     show_source_snippets: bool = True
     show_fix_suggestions: bool = True
     show_severity_breakdown: bool = True

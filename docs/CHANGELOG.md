@@ -2,6 +2,31 @@
 
 All notable changes to Vyper Guard are documented in this file.
 
+## 2026-04-19 — Post v0.3.6 Enhancements
+
+### Added
+
+- Added first-class `--format html` support for `analyze` (single-file and directory modes).
+- Added `--format html` support for `analyze-address`.
+- Added presentation-first HTML security reports with:
+	- severity distribution bars,
+	- vulnerability-type mapping matrix,
+	- findings overview table,
+	- detailed issue cards with explanation/evidence/remediation sections.
+
+### Improved
+
+- Upgraded stats graph HTML styling with a broader color palette (not purple-dominant).
+- Added tabular interaction mapping in stats HTML to complement graph edges and improve readability.
+
+## 2026-04-18 — v0.3.6
+
+### Release
+
+- Structured explorer and address-scan JSON output for cleaner downstream use.
+- `analyze-address` now reports real explorer metadata, ABI stats, and source-language classification.
+- Package version bumped for the next PyPI publication.
+
 ## 2026-04-06 — v0.3.5
 
 ### Release

@@ -83,7 +83,7 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
         "tool": {
             "name": "vyper-guard",
             "version": __version__,
-            "url": "https://github.com/preethamak/vyper",
+            "url": "https://deepwiki.com/preethamak/vyper",
         },
         "environment": {
             "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -111,6 +111,8 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
         payload["failed_detectors"] = report.failed_detectors
     if report.detector_errors:
         payload["detector_errors"] = report.detector_errors
+    if report.analysis_context:
+        payload["analysis_context"] = report.analysis_context
 
     if report.ai_triage:
         payload["ai_triage"] = report.ai_triage

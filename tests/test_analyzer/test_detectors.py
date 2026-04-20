@@ -117,6 +117,19 @@ def payout(to: address, amount: uint256):
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
 
+    def test_state_only_setter_without_external_call_surface_is_not_flagged(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+count: uint256
+
+@external
+def set_count(v: uint256):
+    self.count = v
+"""
+        results = _run_detector(MissingNonreentrantDetector, source)
+        assert len(results) == 0
+
 
 # -------------------------------------------------------------------------
 # UnsafeRawCallDetector
@@ -192,6 +205,21 @@ event OwnerChanged:
 def set_value():
     self.owner = msg.sender
     log OwnerChanged(msg.sender)
+"""
+        results = _run_detector(MissingEventEmissionDetector, source)
+        assert len(results) == 0
+
+    def test_comparison_is_not_treated_as_state_write(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+paused: bool
+
+@external
+def check_only() -> bool:
+    if self.paused == True:
+        return True
+    return False
 """
         results = _run_detector(MissingEventEmissionDetector, source)
         assert len(results) == 0
@@ -409,6 +437,20 @@ def set_owner(new_owner: address):
 """
         results = _run_detector(UnprotectedStateChangeDetector, source)
         assert len(results) == 0
+
+    def test_flags_payable_sensitive_write_without_access_control(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+@payable
+def set_owner(new_owner: address):
+    self.owner = new_owner
+"""
+        results = _run_detector(UnprotectedStateChangeDetector, source)
+        assert len(results) == 1
 
 
 # -------------------------------------------------------------------------
@@ -976,6 +1018,22 @@ def withdraw(amount: uint256):
         assert len(results) == 1
         assert results[0].severity == Severity.HIGH
         assert "CEI" in results[0].title
+
+    def test_nonreentrant_cei_violation_is_downgraded(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+balances: HashMap[address, uint256]
+
+@external
+@nonreentrant
+def withdraw(amount: uint256):
+    send(msg.sender, amount)
+    self.balances[msg.sender] -= amount
+"""
+        results = _run_detector(CEIViolationDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.LOW
 
     def test_no_flag_when_effects_before_interaction(self) -> None:
         source = """\

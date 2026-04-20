@@ -108,6 +108,18 @@ def huge(
         names = [f.name for f in contract.functions]
         assert "huge" in names
 
+    def test_parses_default_arg_with_nested_parentheses(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def foo(x: uint256 = convert(0, uint256)) -> bool:
+    return x == 0
+"""
+        contract = parse_vyper_source(source)
+        names = [f.name for f in contract.functions]
+        assert "foo" in names
+
     def test_skips_single_quote_docstring_block(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -155,6 +167,13 @@ class TestCompilerCheck:
         assert len(results) == 1
         assert results[0].severity.value == "INFO"
         assert "pragma" in results[0].title.lower()
+
+    def test_flags_known_ghsa_range_for_031(self) -> None:
+        source = "# pragma version 0.3.1\nowner: public(address)"
+        contract = parse_vyper_source(source)
+        results = check_compiler_version(contract)
+        advisories = "\n".join(r.title for r in results)
+        assert "GHSA-6m97-7527-mh74" in advisories
 
 
 class TestPragmaFormats:
