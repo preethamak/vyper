@@ -81,10 +81,27 @@ jobs:
         run: uv python install 3.12
       - name: Install dependencies
         run: uv sync --dev
-      - name: Generate Vyper Guard SARIF report
+      - name: Collect Vyper contracts (excluding test fixtures)
+        id: vyper_contracts
         run: |
-          uv run vyper-guard analyze test_contracts --format sarif --output vyper-guard.sarif
+          set -e
+          rm -rf .vyper-guard-scan
+          mkdir -p .vyper-guard-scan
+          mapfile -t files < <(find . -name "*.vy" -not -path "./test_contracts/*")
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            cp --parents "$f" .vyper-guard-scan
+          done
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - name: Generate Vyper Guard SARIF report
+        if: steps.vyper_contracts.outputs.found == 'true'
+        run: |
+          uv run vyper-guard analyze .vyper-guard-scan --format sarif --output vyper-guard.sarif
       - name: Upload SARIF to GitHub code scanning
+        if: steps.vyper_contracts.outputs.found == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: vyper-guard.sarif
