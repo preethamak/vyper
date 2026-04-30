@@ -9,15 +9,16 @@ Detector catalogue
 ------------------
  1. MissingNonreentrantDetector
  2. UnsafeRawCallDetector
- 3. MissingEventEmissionDetector
- 4. TimestampDependenceDetector
- 5. IntegerOverflowDetector          (version-based)
- 6. UnprotectedSelfdestructDetector
- 7. DangerousDelegatecallDetector
- 8. UnprotectedStateChangeDetector
- 9. SendInLoopDetector               (DoS via revert)
-10. UncheckedSubtractionDetector     (missing balance check)
-11. CEIViolationDetector             (call before state update)
+ 3. UncheckedSendDetector
+ 4. MissingEventEmissionDetector
+ 5. TimestampDependenceDetector
+ 6. IntegerOverflowDetector          (version-based)
+ 7. UnprotectedSelfdestructDetector
+ 8. DangerousDelegatecallDetector
+ 9. UnprotectedStateChangeDetector
+10. SendInLoopDetector               (DoS via revert)
+11. UncheckedSubtractionDetector     (missing balance check)
+12. CEIViolationDetector             (call before state update)
 """
 
 from __future__ import annotations
@@ -177,6 +178,8 @@ _SAFE_RAW_CALL_RE = re.compile(
     r"|raw_call\s*\(.*revert_on_failure\s*=\s*(?:True|true|1)\b"
     r"|raw_call\(.*\)\s*#\s*checked"
 )
+# Matches send() calls that are already checked inline.
+_SAFE_SEND_RE = re.compile(r"assert\s+send\b|if\s+not\s+send\b|if\s+send\b")
 
 
 def _strip_inline_comment(line: str) -> str:
@@ -448,7 +451,90 @@ class UnsafeRawCallDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 3. Missing event emission after state change
+# 3. Unchecked send() return value
+# ---------------------------------------------------------------------------
+
+
+class UncheckedSendDetector(BaseDetector):
+    NAME = "unchecked_send"
+    DESCRIPTION = "Detect send() calls whose return value is not checked."
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.EXTERNAL_CALL
+
+    _ASSIGN_RE = re.compile(r"(\w+)\s*(?::\s*\w+(?:\[\d+\])?\s*)?=\s*send\s*\(")
+
+    def _get_full_call(self, body_lines: list[str], call_idx: int) -> str:
+        """Join a multi-line send() call into a single string for analysis."""
+        result = body_lines[call_idx].strip()
+        depth = result.count("(") - result.count(")")
+        j = call_idx + 1
+        while depth > 0 and j < len(body_lines):
+            line = body_lines[j].strip()
+            result += " " + line
+            depth += line.count("(") - line.count(")")
+            j += 1
+        return result
+
+    def _find_call_end(self, body_lines: list[str], call_idx: int) -> int:
+        depth = body_lines[call_idx].count("(") - body_lines[call_idx].count(")")
+        end_idx = call_idx + 1
+        while depth > 0 and end_idx < len(body_lines):
+            line = body_lines[end_idx]
+            depth += line.count("(") - line.count(")")
+            end_idx += 1
+        return end_idx
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                stripped = _strip_inline_comment(line).strip()
+                if "send(" not in stripped:
+                    continue
+
+                full_call = self._get_full_call(func.body_lines, i)
+                if _SAFE_SEND_RE.search(full_call):
+                    continue
+
+                if i > 0 and "assert" in func.body_lines[i - 1] and "send(" in stripped:
+                    continue
+
+                m = self._ASSIGN_RE.search(full_call)
+                if m:
+                    var_name = m.group(1)
+                    end_idx = self._find_call_end(func.body_lines, i)
+                    check_re = re.compile(
+                        rf"\bassert\s+{re.escape(var_name)}\b"
+                        rf"|\bif\s+not\s+{re.escape(var_name)}\b"
+                        rf"|\bif\s+{re.escape(var_name)}\b"
+                    )
+                    search_end = min(end_idx + 5, len(func.body_lines))
+                    if any(check_re.search(func.body_lines[j]) for j in range(end_idx, search_end)):
+                        continue
+
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Unchecked send() in {func.name}()",
+                        description=(
+                            f"``send()`` in ``{func.name}()`` does not have its "
+                            "return value checked. If the transfer fails, the "
+                            "contract can continue in an inconsistent state."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=stripped,
+                        fix_suggestion=(
+                            "Wrap the call: ``assert send(...)`` or capture the "
+                            "boolean result and check it."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 4. Missing event emission after state change
 # ---------------------------------------------------------------------------
 
 
@@ -503,7 +589,7 @@ class MissingEventEmissionDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 4. Timestamp dependence in conditionals
+# 5. Timestamp dependence in conditionals
 # ---------------------------------------------------------------------------
 
 
@@ -595,7 +681,7 @@ class TimestampDependenceDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 5. Unsafe arithmetic operations (Vyper 0.4.0+)
+# 6. Unsafe arithmetic operations (Vyper 0.4.0+)
 # ---------------------------------------------------------------------------
 
 # Matches Vyper 0.4.0+ unsafe_* operations that intentionally bypass
@@ -648,7 +734,7 @@ class IntegerOverflowDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 6. Unprotected selfdestruct
+# 7. Unprotected selfdestruct
 # ---------------------------------------------------------------------------
 
 
@@ -687,7 +773,7 @@ class UnprotectedSelfdestructDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 7. Dangerous delegatecall via raw_call
+# 8. Dangerous delegatecall via raw_call
 # ---------------------------------------------------------------------------
 
 
@@ -746,7 +832,7 @@ class DangerousDelegatecallDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 8. Unprotected state change (missing access control)
+# 9. Unprotected state change (missing access control)
 # ---------------------------------------------------------------------------
 
 
@@ -810,7 +896,7 @@ class UnprotectedStateChangeDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 9. Send / raw_call inside a for-loop (DoS via revert)
+# 10. Send / raw_call inside a for-loop (DoS via revert)
 # ---------------------------------------------------------------------------
 
 
@@ -932,7 +1018,7 @@ class SendInLoopDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 10. Unchecked subtraction (missing balance / allowance check)
+# 11. Unchecked subtraction (missing balance / allowance check)
 # ---------------------------------------------------------------------------
 
 
@@ -1021,7 +1107,7 @@ class UncheckedSubtractionDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
-# 11. CEI violation — external call before state update
+# 12. CEI violation — external call before state update
 # ---------------------------------------------------------------------------
 
 
@@ -1122,6 +1208,7 @@ class CEIViolationDetector(BaseDetector):
 ALL_DETECTORS: list[type[BaseDetector]] = [
     MissingNonreentrantDetector,
     UnsafeRawCallDetector,
+    UncheckedSendDetector,
     MissingEventEmissionDetector,
     TimestampDependenceDetector,
     IntegerOverflowDetector,

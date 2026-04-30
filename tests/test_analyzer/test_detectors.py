@@ -13,6 +13,7 @@ from guardian.analyzer.vyper_detector import (
     MissingNonreentrantDetector,
     SendInLoopDetector,
     TimestampDependenceDetector,
+    UncheckedSendDetector,
     UncheckedSubtractionDetector,
     UnprotectedSelfdestructDetector,
     UnprotectedStateChangeDetector,
@@ -207,6 +208,60 @@ def set_value():
     log OwnerChanged(msg.sender)
 """
         results = _run_detector(MissingEventEmissionDetector, source)
+        assert len(results) == 0
+
+
+# -------------------------------------------------------------------------
+# UncheckedSendDetector
+# -------------------------------------------------------------------------
+
+
+class TestUncheckedSend:
+    def test_flags_unchecked_send(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def withdraw():
+    send(msg.sender, 100)
+"""
+        results = _run_detector(UncheckedSendDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.HIGH
+
+    def test_ignores_asserted_send(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def withdraw():
+    assert send(msg.sender, 100)
+"""
+        results = _run_detector(UncheckedSendDetector, source)
+        assert len(results) == 0
+
+    def test_ignores_checked_assignment(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def withdraw():
+    ok: bool = send(msg.sender, 100)
+    assert ok
+"""
+        results = _run_detector(UncheckedSendDetector, source)
+        assert len(results) == 0
+
+    def test_ignores_if_not_send(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def withdraw():
+    if not send(msg.sender, 100):
+        assert False
+"""
+        results = _run_detector(UncheckedSendDetector, source)
         assert len(results) == 0
 
     def test_comparison_is_not_treated_as_state_write(self) -> None:

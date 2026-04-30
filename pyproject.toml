@@ -1,6 +1,6 @@
 [project]
 name = "vyper-guard"
-version = "0.3.6"
+version = "0.3.8"
 description = "Real-time vulnerability monitoring and auto-remediation for Vyper smart contracts"
 readme = "README.md"
 license = { text = "MIT" }
@@ -47,6 +47,7 @@ vyper-guard = "guardian.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/preethamak/vyper"
+Website = "https://vyper-web.vercel.app"
 Repository = "https://github.com/preethamak/vyper"
 Issues = "https://github.com/preethamak/vyper/issues"
 Documentation = "https://github.com/preethamak/vyper/tree/main/docs"
@@ -64,10 +65,6 @@ include = [
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
-    "/docs/USAGE.md",
-    "/docs/DETECTORS.md",
-    "/docs/INSTALLATION.md",
-    "/docs/CHANGELOG.md",
 ]
 
 [tool.pytest.ini_options]

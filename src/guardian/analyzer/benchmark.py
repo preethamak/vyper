@@ -13,6 +13,7 @@ from guardian.models import Severity
 _DETECTOR_KEYWORDS: dict[str, tuple[str, ...]] = {
     "missing_nonreentrant": ("reentrancy", "classic_reentrancy"),
     "unsafe_raw_call": ("unsafe_raw_call", "raw_call"),
+    "unchecked_send": ("unchecked_send", "send_unchecked"),
     "missing_event_emission": ("missing_events", "event"),
     "timestamp_dependence": ("timestamp", "timestamp_dependence", "timestamp_manipulation"),
     "integer_overflow": ("integer_overflow", "overflow", "underflow", "unchecked_subtraction"),
