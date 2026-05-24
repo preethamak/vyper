@@ -160,6 +160,10 @@ class ContractInfo(BaseModel):
     state_variables: list[StateVariableInfo] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
     lines: list[str] = Field(default_factory=list, description="All source lines (0-indexed).")
+    semantic_mode: str = Field(
+        default="source",
+        description="Semantic engine mode used for analysis: source | compiler.",
+    )
 
 
 class SecurityGrade(str, enum.Enum):

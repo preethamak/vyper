@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import os
+import shlex
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ _DEFAULT_CONFIG_NAMES = [".guardianrc", ".guardianrc.yaml", ".guardianrc.yml"]
 _ALLOWED_FORMATS = {"cli", "json", "markdown", "sarif", "html"}
 _ALLOWED_THRESHOLDS = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 _ALLOWED_FIX_TIERS = {"A", "B", "C"}
+_ALLOWED_SEMANTIC_MODES = {"source", "compiler"}
 
 
 def _is_truthy_env(value: str | None) -> bool:
@@ -40,6 +42,14 @@ class AnalysisConfig(BaseModel):
     severity_threshold: str = Field(
         default="LOW",
         description="Minimum severity to report (LOW, MEDIUM, HIGH, CRITICAL).",
+    )
+    semantic_mode: str = Field(
+        default="source",
+        description="Semantic engine mode: source | compiler.",
+    )
+    project_graph: bool = Field(
+        default=False,
+        description="Enable project-wide graph analysis for directory scans.",
     )
     max_findings: int = Field(default=100, ge=1)
 
@@ -100,6 +110,15 @@ class ExplorerConfig(BaseModel):
     api_key: str | None = None
 
 
+class VerificationConfig(BaseModel):
+    """Settings controlling unit and fuzz verification runs."""
+
+    unit_command: list[str] | None = None
+    fuzz_command: list[str] | None = None
+    timeout_seconds: int = Field(default=600, ge=1)
+    max_output_chars: int = Field(default=20000, ge=1000)
+
+
 class GuardianConfig(BaseModel):
     """Top-level configuration container."""
 
@@ -110,6 +129,7 @@ class GuardianConfig(BaseModel):
     ai_triage: AITriageConfig = Field(default_factory=AITriageConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     explorer: ExplorerConfig = Field(default_factory=ExplorerConfig)
+    verification: VerificationConfig = Field(default_factory=VerificationConfig)
 
 
 def _find_config_file(start_dir: Path | None = None) -> Path | None:
@@ -194,6 +214,11 @@ def load_config(
         if env_fix_norm in _ALLOWED_FIX_TIERS:
             raw.setdefault("remediation", {})["max_auto_fix_tier"] = env_fix_norm
 
+    if env_semantic_mode := os.getenv("GUARDIAN_SEMANTIC_MODE"):
+        env_mode_norm = env_semantic_mode.strip().lower()
+        if env_mode_norm in _ALLOWED_SEMANTIC_MODES:
+            raw.setdefault("analysis", {})["semantic_mode"] = env_mode_norm
+
     if env_ai_triage := os.getenv("GUARDIAN_AI_TRIAGE"):
         raw.setdefault("ai_triage", {})["enabled"] = _is_truthy_env(env_ai_triage)
 
@@ -243,6 +268,20 @@ def load_config(
 
     if env_exp_key := os.getenv("GUARDIAN_EXPLORER_API_KEY"):
         raw.setdefault("explorer", {})["api_key"] = env_exp_key
+
+    if env_unit_cmd := os.getenv("GUARDIAN_UNIT_CMD"):
+        raw.setdefault("verification", {})["unit_command"] = shlex.split(env_unit_cmd)
+
+    if env_fuzz_cmd := os.getenv("GUARDIAN_FUZZ_CMD"):
+        raw.setdefault("verification", {})["fuzz_command"] = shlex.split(env_fuzz_cmd)
+
+    if env_test_timeout := os.getenv("GUARDIAN_TEST_TIMEOUT"):
+        with contextlib.suppress(ValueError):
+            raw.setdefault("verification", {})["timeout_seconds"] = int(env_test_timeout)
+
+    if env_test_output := os.getenv("GUARDIAN_TEST_OUTPUT_LIMIT"):
+        with contextlib.suppress(ValueError):
+            raw.setdefault("verification", {})["max_output_chars"] = int(env_test_output)
 
     return GuardianConfig.model_validate(raw)
 

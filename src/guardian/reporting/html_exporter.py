@@ -258,6 +258,66 @@ def _issue_map_html(report: AnalysisReport) -> str:
     )
 
 
+def _verification_panel_html(report: AnalysisReport) -> str:
+    verification = (
+        report.analysis_context.get("verification")
+        if isinstance(report.analysis_context, dict)
+        else None
+    )
+    if not isinstance(verification, dict):
+        return ""
+
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    rows: list[str] = []
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = _escape(str(result.get("status") or "—")).upper()
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = _escape(str(result.get("reason") or "—"))
+        command = result.get("command") or []
+        if isinstance(command, list):
+            command_text = " ".join(str(part) for part in command)
+        else:
+            command_text = str(command)
+        rows.append(
+            "<tr>"
+            f"<td>{_escape(label)}</td>"
+            f"<td>{status}</td>"
+            f"<td>{duration if duration is not None else '—'}</td>"
+            f"<td>{exit_code if exit_code is not None else '—'}</td>"
+            f"<td>{reason}</td>"
+            f"<td>{_escape(command_text)}</td>"
+            "</tr>"
+        )
+
+    summary_html = ""
+    if summary:
+        summary_html = (
+            "<p class='muted'>"
+            f"passed={summary.get('passed', 0)}, "
+            f"failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, "
+            f"errors={summary.get('errors', 0)}"
+            "</p>"
+        )
+
+    default_row = '<tr><td colspan="6">No verification suites executed.</td></tr>'
+    return (
+        "<section class='panel stack'>"
+        "<h2>Verification</h2>"
+        f"{summary_html}"
+        "<table class='table'>"
+        "<thead><tr><th>Suite</th><th>Status</th><th>Duration (ms)</th>"
+        "<th>Exit</th><th>Notes</th><th>Command</th></tr></thead>"
+        f"<tbody>{''.join(rows) if rows else default_row}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
 def _findings_overview_html(report: AnalysisReport) -> str:
     if not report.findings:
         return "<div class='empty'>No vulnerabilities detected.</div>"
@@ -421,6 +481,7 @@ def export_html(report: AnalysisReport, output_path: str | Path | None = None) -
     payload = report_to_dict(report)
     payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
     context_json = json.dumps(report.analysis_context or {}, indent=2, ensure_ascii=False)
+    verification_html = _verification_panel_html(report)
     imports_text = "\n".join(stats["imports"]) or "None"
     events_text = "\n".join(stats["events"]) or "None"
     state_vars_text = "\n".join(stats["state_variables"]) or "None"
@@ -545,6 +606,8 @@ def export_html(report: AnalysisReport, output_path: str | Path | None = None) -
         {_call_edges_html(stats)}
       </article>
     </section>
+
+    {verification_html}
 
         <section class=\"panel stack\">
       <h2>Findings Overview</h2>

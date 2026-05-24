@@ -2,6 +2,51 @@
 
 All notable changes to Vyper Guard are documented in this file.
 
+## Unreleased
+
+### Added
+
+- (Reserved)
+
+## 2026-05-24 — v0.4.2
+
+### Added
+
+- Added `verify`, `test`, and `fuzz` commands to run unit/fuzz suites and emit verification reports.
+- Added verification metadata to JSON/Markdown/HTML/SARIF outputs.
+- Added a command manual with "what to use and when" guidance in README and docs.
+
+### Fixed
+
+- Fixed HTML verification table generation to remain Python 3.10 compatible.
+
+## 2026-05-19 — v0.4.1
+
+### Added
+
+- Added unresolved import and interface mismatch tables to project Markdown/HTML reports.
+
+### Release
+
+- Version bump to 0.4.1.
+
+## 2026-05-09 — v0.4.0
+
+### Added
+
+- Added project-wide analysis graph for directory scans with `--project-graph` / `analysis.project_graph`.
+- Added import resolution, interface discovery, interface mismatch checks, and internal call/state maps in project graph output.
+- Added project graph summaries to JSON, SARIF, Markdown, and HTML project reports.
+- Added project graph findings to per-file results with severity threshold filtering.
+
+## 2026-05-04 — v0.3.9
+
+### Added
+
+- Added semantic mode selection (`--semantic-mode` / `analysis.semantic_mode`) with `source` (default) and `compiler` options.
+- Added optional compiler-backed semantic extraction using the Vyper AST when available, with safe fallback to source mode.
+- Added semantic mode config support in `.guardianrc` and env override (`GUARDIAN_SEMANTIC_MODE`).
+
 ## 2026-04-19 — Post v0.3.6 Enhancements
 
 ### Added
