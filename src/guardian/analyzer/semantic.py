@@ -344,7 +344,9 @@ def _call_name(node) -> str | None:
     func = getattr(node, "func", None)
     if func is None:
         return None
-    return getattr(func, "id", None) or getattr(func, "attr", None) or getattr(func, "attribute", None)
+    return (
+        getattr(func, "id", None) or getattr(func, "attr", None) or getattr(func, "attribute", None)
+    )
 
 
 def _call_has_delegatecall(node) -> bool:

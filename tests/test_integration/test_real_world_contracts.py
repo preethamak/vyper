@@ -56,7 +56,9 @@ def test_verify_reports_include_verification_metadata() -> None:
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    verification = payload.get("verification") or payload.get("analysis_context", {}).get("verification")
+    verification = payload.get("verification") or payload.get("analysis_context", {}).get(
+        "verification"
+    )
     assert isinstance(verification, dict)
     summary = verification.get("summary")
     assert summary and summary.get("passed", 0) >= 2

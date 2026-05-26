@@ -37,7 +37,9 @@ def _verification_section(report: AnalysisReport) -> list[str]:
     if not isinstance(verification, dict):
         return []
 
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     lines: list[str] = ["## ✅ Verification", ""]
     if summary:
         lines.append(

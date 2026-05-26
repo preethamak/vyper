@@ -528,7 +528,9 @@ def _load_baseline_fingerprints(baseline_file: Path | None) -> set[str]:
         raise typer.Exit(code=2) from exc
 
 
-def _attach_verification_context(report: AnalysisReport, verification: dict[str, object] | None) -> None:
+def _attach_verification_context(
+    report: AnalysisReport, verification: dict[str, object] | None
+) -> None:
     if not verification:
         return
     report.analysis_context = dict(report.analysis_context)
@@ -546,13 +548,17 @@ def _run_verification_suites(
     timeout_seconds: int | None,
     max_output_chars: int | None,
 ) -> dict[str, object]:
-    unit_cmd = parse_command(unit_cmd_override) if unit_cmd_override else cfg.verification.unit_command
+    unit_cmd = (
+        parse_command(unit_cmd_override) if unit_cmd_override else cfg.verification.unit_command
+    )
     if run_unit and unit_cmd is None:
         unit_cmd = default_unit_command(cwd)
     if not run_unit:
         unit_cmd = None
 
-    fuzz_cmd = parse_command(fuzz_cmd_override) if fuzz_cmd_override else cfg.verification.fuzz_command
+    fuzz_cmd = (
+        parse_command(fuzz_cmd_override) if fuzz_cmd_override else cfg.verification.fuzz_command
+    )
     if not run_fuzz:
         fuzz_cmd = None
 
@@ -948,7 +954,9 @@ def _run_verification_flow(
         timeout_seconds=test_timeout,
         max_output_chars=test_output_limit,
     )
-    verification_summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    verification_summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     verification_ok = bool(verification_summary.get("ok", True))
 
     if run_static and file_path.is_file() and project_graph_enabled:
@@ -1412,7 +1420,9 @@ def _verification_markdown_section(verification: dict[str, object] | None) -> li
     if not isinstance(verification, dict):
         return []
 
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     lines = ["## Verification", ""]
     if summary:
         lines.append(
@@ -1454,7 +1464,9 @@ def _verification_html_section(verification: dict[str, object] | None) -> str:
     if not isinstance(verification, dict):
         return ""
 
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     rows: list[str] = []
     for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
         result = verification.get(key, {})
@@ -2095,7 +2107,9 @@ def _print_verification_cli(verification: dict[str, object] | None) -> None:
         return
 
     console.print(Rule("[bold]✅ Verification[/bold]", style=ACCENT))
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     if summary:
         console.print(
             f"[dim]passed={summary.get('passed', 0)}, failed={summary.get('failed', 0)}, "
@@ -2142,9 +2156,7 @@ def _apply_project_findings(
         if not extras:
             continue
         filtered = [
-            finding
-            for finding in extras
-            if severity_order.index(finding.severity) <= threshold_idx
+            finding for finding in extras if severity_order.index(finding.severity) <= threshold_idx
         ]
         if not filtered:
             continue
@@ -2365,7 +2377,7 @@ def scan(
     ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
     ai_allow_fallback: bool = typer.Option(False, "--allow-ai-fallback"),
-    ) -> None:
+) -> None:
     """Alias for 'analyze' — scan a Vyper contract for vulnerabilities."""
     analyze(
         file_path=file_path,

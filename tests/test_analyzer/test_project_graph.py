@@ -41,14 +41,10 @@ def foo():
     graph = result.graph
 
     edges = graph.get("edges", [])
-    assert any(
-        edge.get("import") == "token" and edge.get("resolved") is True for edge in edges
-    )
+    assert any(edge.get("import") == "token" and edge.get("resolved") is True for edge in edges)
 
     unresolved = graph.get("unresolved_imports", [])
     assert any(item.get("import") == "missing" for item in unresolved)
 
     vault_findings = result.findings.get(str(vault), [])
-    assert any(
-        finding.detector_name == "project_interface_mismatch" for finding in vault_findings
-    )
+    assert any(finding.detector_name == "project_interface_mismatch" for finding in vault_findings)

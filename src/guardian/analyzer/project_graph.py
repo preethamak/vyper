@@ -35,9 +35,7 @@ class ProjectGraphResult:
     findings: dict[str, list[DetectorResult]]
 
 
-def build_project_graph(
-    target_dir: Path, contract_paths: Iterable[Path]
-) -> ProjectGraphResult:
+def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> ProjectGraphResult:
     """Build a project-wide analysis graph.
 
     Args:

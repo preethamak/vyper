@@ -165,7 +165,9 @@ def _print_verification_section(con: Console, report: AnalysisReport) -> None:
         return
 
     con.print("  [bold]Verification[/bold]")
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     if summary:
         con.print(
             f"  [dim]passed={summary.get('passed', 0)}, failed={summary.get('failed', 0)}, "

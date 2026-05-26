@@ -267,7 +267,9 @@ def _verification_panel_html(report: AnalysisReport) -> str:
     if not isinstance(verification, dict):
         return ""
 
-    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    summary = (
+        verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    )
     rows: list[str] = []
     for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
         result = verification.get(key, {})
