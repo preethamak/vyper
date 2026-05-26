@@ -1,11 +1,11 @@
 [project]
 name = "vyper-guard"
-version = "0.3.8"
+version = "0.4.2"
 description = "Real-time vulnerability monitoring and auto-remediation for Vyper smart contracts"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "preethamak" }]
+authors = [{ name = "Preetham AK" }]
 keywords = ["vyper", "security", "smart-contracts", "blockchain", "vulnerability-scanner", "static-analysis"]
 classifiers = [
     "Development Status :: 4 - Beta",

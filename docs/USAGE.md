@@ -17,6 +17,25 @@ vyper-guard analyze-address -h
 vyper-guard stats -h
 ```
 
+## Command Manual (What to Use, When)
+
+| Command | What it does | When to use it |
+|---|---|---|
+| `analyze <file|dir>` | Static security scan with full detector suite. | Default choice for local contracts before tests or audits. |
+| `verify <file|dir>` | Static analysis + unit/fuzz results in one report. | Best for CI or release gates where tests matter. |
+| `test <file|dir>` | Runs unit tests and emits verification report. | Use when you only want unit test status and timing. |
+| `fuzz <file|dir>` | Runs fuzz tests and emits verification report. | Use when you have fuzz harnesses or invariants. |
+| `analyze-address <addr>` | Pulls verified on-chain source and analyzes it. | Use for auditing deployed contracts. |
+| `explorer <addr>` | Fetches explorer metadata, ABI stats, and source. | Use to inspect a contract before running analysis. |
+| `diff <before> <after>` | Compares findings and security score between versions. | Use to confirm that fixes improved security posture. |
+| `stats <file|dir>` | Emits metrics, graphs, and structure summaries. | Use for engineering insights or documentation. |
+| `ast <file>` | Structural AST JSON export. | Use for tooling or deeper inspection. |
+| `flow <file>` | Call-flow/interaction export. | Use for understanding contract control flow. |
+| `detectors` | Lists all detectors with severity and category. | Use to learn what the analyzer covers. |
+| `fix <file>` | Guided remediation workflow. | Use to apply safe auto-fixes or review diffs. |
+| `baseline` / `monitor` | Baseline + monitor deployed contracts. | Use for production monitoring and regression alerts. |
+| `benchmark [dir]` | Detector benchmark run. | Use for detector quality checks in CI. |
+
 ## Static Analysis
 
 ### Basic Scan
@@ -27,6 +46,30 @@ vyper-guard analyze path/to/contract.vy
 
 # Absolute paths work too
 vyper-guard analyze /home/user/projects/my_vault.vy
+```
+
+### Semantic Mode (Source vs Compiler)
+
+Vyper Guard defaults to fast source-based semantic extraction. You can opt into
+compiler-backed semantics if the `vyper` extra is installed.
+
+```bash
+# Default source-based semantic mode
+vyper-guard analyze contract.vy --semantic-mode source
+
+# Compiler-backed semantic mode (requires vyper)
+vyper-guard analyze contract.vy --semantic-mode compiler
+```
+
+Config and env overrides:
+
+```yaml
+analysis:
+  semantic_mode: source  # or compiler
+```
+
+```bash
+export GUARDIAN_SEMANTIC_MODE=compiler
 ```
 
 Command note:
@@ -54,6 +97,35 @@ vyper-guard analyze contract.vy --format html --output report.html
 # If --format is omitted, the default comes from .guardianrc (reporting.default_format)
 ```
 
+### Verification (Unit + Fuzz)
+
+Verification runs static analysis plus optional unit/fuzz suites and includes
+the results in CLI/JSON/Markdown/HTML/SARIF outputs.
+
+```bash
+# Static analysis + unit tests
+vyper-guard verify contracts/ --unit-cmd "pytest -q"
+
+# Static analysis + unit + fuzz (custom command)
+vyper-guard verify contracts/ --unit-cmd "pytest -q" --fuzz-cmd "pytest -q -m fuzz"
+
+# Unit tests only
+vyper-guard test . --unit-cmd "pytest -q"
+
+# Fuzz only
+vyper-guard fuzz . --fuzz-cmd "pytest -q -m fuzz"
+```
+
+Config (optional defaults):
+
+```yaml
+verification:
+  unit_command: ["pytest", "-q"]
+  fuzz_command: ["pytest", "-q", "-m", "fuzz"]
+  timeout_seconds: 600
+  max_output_chars: 20000
+```
+
 ### Directory / Project Scan
 
 ```bash
@@ -79,13 +151,23 @@ vyper-guard analyze contracts/ --format json \
 # Refresh baseline fingerprints from current scan results
 vyper-guard analyze contracts/ --format json \
   --baseline-file .guardian-baseline.json --update-baseline
+
+# Include the project graph (imports, interfaces, call/state maps)
+vyper-guard analyze contracts/ --project-graph --format json
 ```
 
 Notes:
 
-- Directory mode currently aggregates analysis results only.
+- Directory mode aggregates per-file analysis results; `--project-graph` adds cross-file findings.
 - `--fix` and `--fix-dry-run` are single-file only.
 - AI triage metadata is currently applied in single-file mode.
+
+Project graph config:
+
+```yaml
+analysis:
+  project_graph: true
+```
 
 Security notes:
 
@@ -547,6 +629,10 @@ ai_triage:
 | `GUARDIAN_AI_TRIAGE_DEPRECATION_ANNOUNCED` | Deprecation announcement flag (`true/false`) |
 | `GUARDIAN_AI_TRIAGE_DEPRECATION_SUNSET_AFTER` | Policy deprecation sunset date string |
 | `GUARDIAN_LLM_MEMORY_MAX_ENTRIES` | Cap persisted agent memory entries |
+| `GUARDIAN_UNIT_CMD` | Unit test command (string, parsed like a shell) |
+| `GUARDIAN_FUZZ_CMD` | Fuzz test command (string, parsed like a shell) |
+| `GUARDIAN_TEST_TIMEOUT` | Test timeout in seconds |
+| `GUARDIAN_TEST_OUTPUT_LIMIT` | Max captured output chars per stream |
 
 ## Exit Codes
 

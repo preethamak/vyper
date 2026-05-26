@@ -15,6 +15,13 @@
       "description": "Flags raw_call() invocations whose success is not asserted or checked."
     },
     {
+      "name": "unchecked_send",
+      "category": "external_call",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags send() calls whose return value is not checked."
+    },
+    {
       "name": "missing_event_emission",
       "category": "code_quality",
       "severity": "LOW",

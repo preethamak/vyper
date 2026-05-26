@@ -130,6 +130,16 @@ def report_to_sarif_dict(report: AnalysisReport) -> dict[str, Any]:
         ],
     }
 
+    verification = (
+        report.analysis_context.get("verification")
+        if isinstance(report.analysis_context, dict)
+        else None
+    )
+    if verification is not None:
+        run_properties = payload["runs"][0].get("properties")
+        if isinstance(run_properties, dict):
+            run_properties["verification"] = verification
+
     return payload
 
 

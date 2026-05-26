@@ -1,9 +1,10 @@
 """Vyper-specific vulnerability detectors.
 
 This module defines the ``BaseDetector`` abstract class and ships eleven
-concrete detectors that operate on parsed ``ContractInfo`` objects.  Every
-detector works purely on the **source-level parse** produced by
-``ast_parser``; the Vyper compiler is never required.
+concrete detectors that operate on parsed ``ContractInfo`` objects.  By
+default detectors use the **source-level parse** produced by ``ast_parser``;
+the Vyper compiler is optional and only used when semantic mode is set to
+``compiler``.
 
 Detector catalogue
 ------------------

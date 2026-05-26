@@ -113,6 +113,13 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
         payload["detector_errors"] = report.detector_errors
     if report.analysis_context:
         payload["analysis_context"] = report.analysis_context
+        verification = (
+            report.analysis_context.get("verification")
+            if isinstance(report.analysis_context, dict)
+            else None
+        )
+        if verification is not None:
+            payload["verification"] = verification
 
     if report.ai_triage:
         payload["ai_triage"] = report.ai_triage

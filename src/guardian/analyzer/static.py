@@ -3,7 +3,7 @@
 This is the top-level entry point for analysing a Vyper contract.  It:
 
 1. Loads the source file.
-2. Parses it into a ``ContractInfo`` (no compiler needed).
+2. Parses it into a ``ContractInfo`` (no compiler needed for default mode).
 3. Runs the compiler-version checker.
 4. Runs every enabled detector.
 5. Computes the security score.
@@ -51,9 +51,11 @@ class StaticAnalyzer:
         enabled_detectors: Sequence[str] = ("all",),
         disabled_detectors: Sequence[str] = (),
         severity_threshold: Severity = Severity.INFO,
+        semantic_mode: str = "source",
     ) -> None:
         self._detectors = self._resolve_detectors(enabled_detectors, disabled_detectors)
         self._severity_threshold = severity_threshold
+        self._semantic_mode = self._normalize_semantic_mode(semantic_mode)
 
     # ------------------------------------------------------------------
     # Public API
@@ -75,15 +77,19 @@ class StaticAnalyzer:
         path = Path(file_path).resolve()
         source = load_vyper_source(path)
         contract = parse_vyper_source(source, str(path))
+        contract = contract.model_copy(update={"semantic_mode": self._semantic_mode})
         return self.analyze_contract(contract)
 
     def analyze_source(self, source: str, file_path: str = "<stdin>") -> AnalysisReport:
         """Analyse raw Vyper source code (useful for testing)."""
         contract = parse_vyper_source(source, file_path)
+        contract = contract.model_copy(update={"semantic_mode": self._semantic_mode})
         return self.analyze_contract(contract)
 
     def analyze_contract(self, contract: ContractInfo) -> AnalysisReport:
         """Run all detectors against an already-parsed ``ContractInfo``."""
+        if contract.semantic_mode != self._semantic_mode:
+            contract = contract.model_copy(update={"semantic_mode": self._semantic_mode})
         all_findings: list[DetectorResult] = []
         detector_names_run: list[str] = []
         failed_detectors: list[str] = []
@@ -175,6 +181,13 @@ class StaticAnalyzer:
                 continue
             resolved.append(DETECTOR_MAP[name])
         return resolved
+
+    @staticmethod
+    def _normalize_semantic_mode(mode: str) -> str:
+        normalized = mode.strip().lower()
+        if normalized not in {"source", "compiler"}:
+            raise ValueError(f"Unsupported semantic mode: {mode}")
+        return normalized
 
 
 # Maximum total deduction allowed per severity tier.

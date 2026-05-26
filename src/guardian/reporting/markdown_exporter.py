@@ -28,6 +28,54 @@ _GRADE_EMOJI: dict[str, str] = {
 }
 
 
+def _verification_section(report: AnalysisReport) -> list[str]:
+    verification = (
+        report.analysis_context.get("verification")
+        if isinstance(report.analysis_context, dict)
+        else None
+    )
+    if not isinstance(verification, dict):
+        return []
+
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    lines: list[str] = ["## ✅ Verification", ""]
+    if summary:
+        lines.append(
+            f"- Summary: passed={summary.get('passed', 0)}, "
+            f"failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, "
+            f"errors={summary.get('errors', 0)}"
+        )
+        lines.append("")
+
+    lines.extend(
+        [
+            "| Suite | Status | Duration (ms) | Exit | Notes | Command |",
+            "|---|---|---:|---:|---|---|",
+        ]
+    )
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "—").upper()
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = result.get("reason") or "—"
+        command = result.get("command") or []
+        if isinstance(command, list):
+            command_text = " ".join(str(part) for part in command)
+        else:
+            command_text = str(command)
+        lines.append(
+            f"| {label} | {status} | {duration if duration is not None else '—'} | "
+            f"{exit_code if exit_code is not None else '—'} | {reason} | `{command_text}` |"
+        )
+
+    lines.append("")
+    return lines
+
+
 def _prepare_output_path(output_path: str | Path) -> Path:
     path = Path(output_path).expanduser()
     if path.exists():
@@ -104,6 +152,10 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
 
     w(f"| **TOTAL** | **{len(report.findings)}** | |")
     w("")
+
+    verification_lines = _verification_section(report)
+    if verification_lines:
+        lines.extend(verification_lines)
 
     if not report.findings:
         w("> ✅ **No vulnerabilities detected!**")

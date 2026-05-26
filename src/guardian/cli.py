@@ -32,6 +32,7 @@ from rich.tree import Tree
 from guardian import __app_name__, __version__
 from guardian.analyzer.ai_triage import apply_ai_triage
 from guardian.analyzer.benchmark import run_corpus_benchmark
+from guardian.analyzer.project_graph import build_project_graph
 from guardian.analyzer.static import StaticAnalyzer
 from guardian.analyzer.vyper_detector import list_detectors as _list_detectors
 from guardian.models import (
@@ -48,6 +49,13 @@ from guardian.reporting.json_exporter import export_json, report_to_dict
 from guardian.reporting.markdown_exporter import export_markdown
 from guardian.reporting.sarif_exporter import export_sarif, report_to_sarif_dict
 from guardian.reporting.score import score_report
+from guardian.testing.runner import (
+    build_verification_summary,
+    default_unit_command,
+    parse_command,
+    result_to_dict,
+    run_command,
+)
 from guardian.utils.config import load_config
 from guardian.utils.helpers import FileLoadError, GuardianError
 from guardian.utils.logger import setup_logging
@@ -466,51 +474,569 @@ def _validate_contract_path(file_path: Path) -> None:
         )
         raise typer.Exit(code=2)
 
-    size = file_path.stat().st_size
-    if size == 0:
+
+def _resolve_analysis_config(
+    *,
+    format: str | None,
+    detectors: str | None,
+    severity_threshold: str | None,
+    semantic_mode: str | None,
+    project_graph: bool | None,
+    config: Path | None,
+) -> tuple[object, list[str], Severity, str, bool, str]:
+    cfg = load_config(str(config) if config else None)
+
+    enabled = ["all"]
+    if detectors:
+        enabled = [d.strip() for d in detectors.split(",")]
+    elif cfg.analysis.enabled_detectors != ["all"]:
+        enabled = cfg.analysis.enabled_detectors
+
+    threshold_name = (severity_threshold or cfg.analysis.severity_threshold).upper()
+    try:
+        threshold = Severity(threshold_name)
+    except ValueError:
+        console.print(f"[{ERR}]Invalid severity threshold: {threshold_name}[/{ERR}]")
+        raise typer.Exit(code=2) from None
+
+    resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
+    if resolved_semantic_mode not in {"source", "compiler"}:
         console.print(
-            Panel(
-                f"[{ERR}]The file is empty (0 bytes).[/{ERR}]\n\n  File: {file_path}",
-                title="[bold red]Empty File[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-            )
+            f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
         )
         raise typer.Exit(code=2)
 
-    # Reject files with only comments/whitespace because they cannot be analysed meaningfully.
-    text = file_path.read_text(encoding="utf-8", errors="ignore")
-    code_lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    if not code_lines:
+    project_graph_enabled = cfg.analysis.project_graph if project_graph is None else project_graph
+
+    fmt = (format or cfg.reporting.default_format).lower()
+    if fmt not in {"cli", "json", "markdown", "sarif", "html"}:
         console.print(
-            Panel(
-                f"[{ERR}]No contract code found (only comments/blank lines).[/{ERR}]\n\n"
-                f"  File: {file_path}\n\n"
-                "  [dim]Add Vyper declarations (state vars, functions, interfaces, etc.) and try again.[/dim]",
-                title="[bold red]No Contract Code[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-            )
+            f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown, sarif, html.[/{ERR}]"
         )
         raise typer.Exit(code=2)
 
-    max_mb = 10
-    if size > max_mb * 1024 * 1024:
-        mb = size / (1024 * 1024)
-        console.print(
-            Panel(
-                f"[{ERR}]File is too large: {mb:.1f} MB (limit: {max_mb} MB)[/{ERR}]\n\n"
-                f"  File: {file_path}",
-                title="[bold red]File Too Large[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-            )
+    return cfg, enabled, threshold, resolved_semantic_mode, project_graph_enabled, fmt
+
+
+def _load_baseline_fingerprints(baseline_file: Path | None) -> set[str]:
+    if baseline_file is None:
+        return set()
+    try:
+        return _load_finding_baseline(baseline_file)
+    except ValueError as exc:
+        console.print(f"[{ERR}]Invalid baseline file:[/{ERR}] {exc}")
+        raise typer.Exit(code=2) from exc
+
+
+def _attach_verification_context(report: AnalysisReport, verification: dict[str, object] | None) -> None:
+    if not verification:
+        return
+    report.analysis_context = dict(report.analysis_context)
+    report.analysis_context["verification"] = verification
+
+
+def _run_verification_suites(
+    *,
+    cfg,
+    cwd: Path,
+    unit_cmd_override: str | None,
+    fuzz_cmd_override: str | None,
+    run_unit: bool,
+    run_fuzz: bool,
+    timeout_seconds: int | None,
+    max_output_chars: int | None,
+) -> dict[str, object]:
+    unit_cmd = parse_command(unit_cmd_override) if unit_cmd_override else cfg.verification.unit_command
+    if run_unit and unit_cmd is None:
+        unit_cmd = default_unit_command(cwd)
+    if not run_unit:
+        unit_cmd = None
+
+    fuzz_cmd = parse_command(fuzz_cmd_override) if fuzz_cmd_override else cfg.verification.fuzz_command
+    if not run_fuzz:
+        fuzz_cmd = None
+
+    timeout = timeout_seconds or cfg.verification.timeout_seconds
+    output_limit = max_output_chars or cfg.verification.max_output_chars
+
+    unit_result = run_command(
+        "unit",
+        unit_cmd,
+        cwd=cwd,
+        timeout_seconds=timeout,
+        max_output_chars=output_limit,
+        skip_reason="Unit tests disabled." if not run_unit else None,
+    )
+    fuzz_result = run_command(
+        "fuzz",
+        fuzz_cmd,
+        cwd=cwd,
+        timeout_seconds=timeout,
+        max_output_chars=output_limit,
+        skip_reason="Fuzz tests disabled." if not run_fuzz else None,
+    )
+
+    results = {"unit": unit_result, "fuzz": fuzz_result}
+    summary = build_verification_summary(results)
+    return {
+        "cwd": str(cwd),
+        "unit": result_to_dict(unit_result),
+        "fuzz": result_to_dict(fuzz_result),
+        "summary": summary,
+    }
+
+
+def _emit_single_report(
+    *,
+    report: AnalysisReport,
+    file_path: Path,
+    fmt: str,
+    output: Path | None,
+    elapsed_ms: float,
+    baseline_file: Path | None,
+    baseline_fingerprints: set[str],
+    baseline_diff: bool,
+    update_baseline: bool,
+    verification: dict[str, object] | None = None,
+) -> None:
+    _attach_verification_context(report, verification)
+
+    raw_fingerprints = _collect_report_fingerprints(report)
+    if update_baseline and baseline_file is not None:
+        _write_finding_baseline(
+            baseline_file,
+            raw_fingerprints,
+            target=str(file_path),
         )
+
+    if baseline_diff and baseline_file is not None:
+        baseline_diff_meta = _compute_baseline_diff(raw_fingerprints, baseline_fingerprints)
+        report.analysis_context = dict(report.analysis_context)
+        report.analysis_context["baseline_diff"] = {
+            "file": str(baseline_file),
+            **baseline_diff_meta,
+        }
+
+    findings_before_suppression = len(report.findings)
+    suppressed_count = _apply_finding_baseline(report, baseline_fingerprints)
+    if baseline_file is not None:
+        report.analysis_context = dict(report.analysis_context)
+        report.analysis_context["baseline"] = {
+            "file": str(baseline_file),
+            "entries": len(baseline_fingerprints),
+            "findings_before_suppression": findings_before_suppression,
+            "findings_suppressed": suppressed_count,
+            "findings_active": len(report.findings),
+        }
+    if suppressed_count and fmt == "cli":
+        console.print(
+            f"[{WARN}]Baseline suppression applied:[/{WARN}] {suppressed_count} finding(s) hidden."
+        )
+
+    if fmt == "json":
+        text = export_json(report, output)
+        if not output:
+            typer.echo(text)
+    elif fmt == "sarif":
+        text = export_sarif(report, output)
+        if not output:
+            typer.echo(text)
+    elif fmt == "markdown":
+        text = export_markdown(report, output)
+        if not output:
+            typer.echo(text)
+    elif fmt == "html":
+        text = export_html(report, output)
+        if not output:
+            typer.echo(text)
+    else:
+        _print_rich_report(report, elapsed_ms)
+        if output:
+            export_json(report, output)
+
+
+def _run_single_analysis(
+    *,
+    file_path: Path,
+    analyzer: StaticAnalyzer,
+    fmt: str,
+    cfg,
+    ai: bool,
+    ai_triage: bool | None,
+    ai_triage_min_severity: str | None,
+    ai_triage_max_items: int | None,
+    ai_triage_mode: str | None,
+    ai_llm_model: str | None,
+    ai_allow_fallback: bool,
+) -> tuple[AnalysisReport, float]:
+    def _build_runtime_fallback_report(error: Exception) -> AnalysisReport:
+        return AnalysisReport(
+            file_path=str(file_path),
+            vyper_version=None,
+            findings=[
+                DetectorResult(
+                    detector_name="analyzer_runtime_error",
+                    severity=Severity.HIGH,
+                    confidence=Confidence.LOW,
+                    vulnerability_type=VulnerabilityType.CODE_QUALITY,
+                    title="Analysis fallback mode",
+                    description=(
+                        "Vyper Guard encountered an unexpected analyzer runtime error and returned "
+                        "a best-effort fallback report so output remains structured. "
+                        "Treat this contract as requiring manual review."
+                    ),
+                    line_number=None,
+                    fix_suggestion=(
+                        "Retry with --verbose and share the failing contract snippet with maintainers."
+                    ),
+                    why_flagged="Analyzer runtime exception prevented full detector execution.",
+                    evidence=[f"{type(error).__name__}: {error}"],
+                    why_not_suppressed="Fallback finding is intentionally always emitted to avoid silent pass.",
+                )
+            ],
+            detectors_run=["analyzer_runtime_error"],
+            security_score=0,
+        )
+
+    try:
+        t0 = _time.perf_counter()
+
+        if fmt == "cli":
+            with Progress(
+                SpinnerColumn("dots"),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=25),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=True,
+            ) as progress:
+                task = progress.add_task(f"[{ACCENT}]Scanning {file_path.name}…", total=100)
+                progress.update(task, completed=15, description="Parsing source…")
+                report = analyzer.analyze_file(file_path)
+                progress.update(task, completed=100, description="Done!")
+        else:
+            report = analyzer.analyze_file(file_path)
+
+        elapsed_ms = (_time.perf_counter() - t0) * 1000
+
+    except FileLoadError as exc:
+        console.print(f"[{ERR}]Error:[/{ERR}] {exc}")
+        raise typer.Exit(code=2) from exc
+    except GuardianError as exc:
+        console.print(f"[{ERR}]Analysis failed:[/{ERR}] {exc}")
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        elapsed_ms = (_time.perf_counter() - t0) * 1000
+        report = _build_runtime_fallback_report(exc)
+        console.print(
+            f"[{WARN}]Analyzer fallback:[/{WARN}] encountered runtime error; returning structured best-effort output."
+        )
+
+    triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed = (
+        _resolve_ai_triage_settings(
+            cfg=cfg,
+            ai=ai,
+            ai_triage=ai_triage,
+            ai_triage_min_severity=ai_triage_min_severity,
+            ai_triage_max_items=ai_triage_max_items,
+            ai_triage_mode=ai_triage_mode,
+            ai_allow_fallback=ai_allow_fallback,
+        )
+    )
+    if triage_enabled:
+        if triage_mode == "llm":
+            from guardian.agents.llm_triage import LLMTriageError, apply_llm_triage
+
+            llm_model = ai_llm_model or cfg.llm.model
+            llm_key = cfg.llm.api_key or ""
+            try:
+                apply_llm_triage(
+                    report,
+                    file_path.read_text(encoding="utf-8"),
+                    api_key=llm_key,
+                    model=llm_model,
+                    provider=cfg.llm.provider,
+                    base_url=cfg.llm.base_url,
+                    min_severity=triage_min,
+                    max_items=triage_max_items,
+                    temperature=cfg.llm.temperature,
+                )
+            except LLMTriageError as exc:
+                if not fallback_allowed:
+                    console.print(
+                        f"[{ERR}]LLM triage failed:[/{ERR}] {exc}. "
+                        "Re-run with --allow-ai-fallback to enable deterministic fallback."
+                    )
+                    raise typer.Exit(code=2) from exc
+                console.print(
+                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage (--allow-ai-fallback)."
+                )
+                _apply_deterministic_triage(
+                    report,
+                    cfg=cfg,
+                    triage_min=triage_min,
+                    triage_max_items=triage_max_items,
+                )
+                _annotate_llm_fallback(report, str(exc))
+        else:
+            _apply_deterministic_triage(
+                report,
+                cfg=cfg,
+                triage_min=triage_min,
+                triage_max_items=triage_max_items,
+            )
+
+    return report, elapsed_ms
+
+
+def _build_empty_report(file_path: Path) -> AnalysisReport:
+    return AnalysisReport(
+        file_path=str(file_path),
+        vyper_version=None,
+        findings=[],
+        detectors_run=[],
+        security_score=100,
+        grade=SecurityGrade.A_PLUS,
+    )
+
+
+def _emit_project_verification_only(
+    *,
+    target_dir: Path,
+    fmt: str,
+    output: Path | None,
+    verification: dict[str, object],
+    elapsed_ms: float,
+) -> None:
+    reports: list[AnalysisReport] = []
+    if fmt == "json":
+        payload = _project_json_payload(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff=None,
+            project_graph=None,
+            verification=verification,
+        )
+        text = _json.dumps(payload, indent=2, ensure_ascii=False)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "sarif":
+        payload = _project_sarif_payload(
+            target_dir,
+            reports,
+            baseline_diff=None,
+            project_graph=None,
+            verification=verification,
+        )
+        text = _json.dumps(payload, indent=2, ensure_ascii=False)
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "markdown":
+        text = _project_markdown_report(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff=None,
+            project_graph=None,
+            verification=verification,
+        )
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    elif fmt == "html":
+        text = _project_html_report(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff=None,
+            project_graph=None,
+            verification=verification,
+        )
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+    else:
+        _print_project_cli_summary(target_dir, reports, elapsed_ms, verification)
+        if output:
+            payload = _project_json_payload(
+                target_dir,
+                reports,
+                elapsed_ms,
+                baseline_diff=None,
+                project_graph=None,
+                verification=verification,
+            )
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(_json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _run_verification_flow(
+    *,
+    file_path: Path,
+    format: str | None,
+    output: Path | None,
+    baseline_file: Path | None,
+    baseline_diff: bool,
+    update_baseline: bool,
+    detectors: str | None,
+    severity_threshold: str | None,
+    semantic_mode: str | None,
+    project_graph: bool | None,
+    config: Path | None,
+    ci: bool,
+    verbose: bool,
+    ai_triage: bool | None,
+    ai: bool,
+    ai_triage_min_severity: str | None,
+    ai_triage_max_items: int | None,
+    ai_triage_mode: str | None,
+    ai_llm_model: str | None,
+    ai_allow_fallback: bool,
+    unit_cmd: str | None,
+    fuzz_cmd: str | None,
+    run_unit: bool,
+    run_fuzz: bool,
+    test_timeout: int | None,
+    test_output_limit: int | None,
+    run_static: bool,
+) -> None:
+    setup_logging(verbose)
+
+    if run_static and file_path.is_file():
+        _validate_contract_path(file_path)
+
+    cfg, enabled, threshold, resolved_semantic_mode, project_graph_enabled, fmt = (
+        _resolve_analysis_config(
+            format=format,
+            detectors=detectors,
+            severity_threshold=severity_threshold,
+            semantic_mode=semantic_mode,
+            project_graph=project_graph,
+            config=config,
+        )
+    )
+
+    if update_baseline and baseline_file is None:
+        console.print(f"[{ERR}]--update-baseline requires --baseline-file.[/{ERR}]")
         raise typer.Exit(code=2)
+    if baseline_diff and baseline_file is None:
+        console.print(f"[{ERR}]--baseline-diff requires --baseline-file.[/{ERR}]")
+        raise typer.Exit(code=2)
+
+    baseline_fingerprints = _load_baseline_fingerprints(baseline_file) if run_static else set()
+
+    cwd = file_path if file_path.is_dir() else file_path.parent
+    verification = _run_verification_suites(
+        cfg=cfg,
+        cwd=cwd,
+        unit_cmd_override=unit_cmd,
+        fuzz_cmd_override=fuzz_cmd,
+        run_unit=run_unit,
+        run_fuzz=run_fuzz,
+        timeout_seconds=test_timeout,
+        max_output_chars=test_output_limit,
+    )
+    verification_summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    verification_ok = bool(verification_summary.get("ok", True))
+
+    if run_static and file_path.is_file() and project_graph_enabled:
+        console.print(
+            f"[{WARN}]Project graph is only available for directory scans; ignoring for file target.[/{WARN}]"
+        )
+
+    if run_static:
+        analyzer = StaticAnalyzer(
+            enabled_detectors=enabled,
+            disabled_detectors=cfg.analysis.disabled_detectors,
+            severity_threshold=threshold,
+            semantic_mode=resolved_semantic_mode,
+        )
+        if file_path.is_dir():
+            reports = _analyze_directory_target(
+                target_dir=file_path,
+                analyzer=analyzer,
+                fmt=fmt,
+                output=output,
+                ci=False,
+                baseline_file=baseline_file,
+                baseline_fingerprints=baseline_fingerprints,
+                baseline_diff=baseline_diff,
+                update_baseline=update_baseline,
+                project_graph=project_graph_enabled,
+                severity_threshold=threshold,
+                verification=verification,
+            )
+            static_has_findings = any(report.findings for report in reports)
+        else:
+            report, elapsed_ms = _run_single_analysis(
+                file_path=file_path,
+                analyzer=analyzer,
+                fmt=fmt,
+                cfg=cfg,
+                ai=ai,
+                ai_triage=ai_triage,
+                ai_triage_min_severity=ai_triage_min_severity,
+                ai_triage_max_items=ai_triage_max_items,
+                ai_triage_mode=ai_triage_mode,
+                ai_llm_model=ai_llm_model,
+                ai_allow_fallback=ai_allow_fallback,
+            )
+            _emit_single_report(
+                report=report,
+                file_path=file_path,
+                fmt=fmt,
+                output=output,
+                elapsed_ms=elapsed_ms,
+                baseline_file=baseline_file,
+                baseline_fingerprints=baseline_fingerprints,
+                baseline_diff=baseline_diff,
+                update_baseline=update_baseline,
+                verification=verification,
+            )
+            static_has_findings = bool(report.findings)
+    else:
+        if file_path.is_dir():
+            elapsed_ms = float(verification_summary.get("duration_ms", 0.0))
+            _emit_project_verification_only(
+                target_dir=file_path,
+                fmt=fmt,
+                output=output,
+                verification=verification,
+                elapsed_ms=elapsed_ms,
+            )
+        else:
+            report = _build_empty_report(file_path)
+            elapsed_ms = float(verification_summary.get("duration_ms", 0.0))
+            _emit_single_report(
+                report=report,
+                file_path=file_path,
+                fmt=fmt,
+                output=output,
+                elapsed_ms=elapsed_ms,
+                baseline_file=None,
+                baseline_fingerprints=set(),
+                baseline_diff=False,
+                update_baseline=False,
+                verification=verification,
+            )
+        static_has_findings = False
+
+    if ci and (static_has_findings or not verification_ok):
+        raise typer.Exit(code=1)
+
+    return
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -564,6 +1090,16 @@ def analyze(
         "--severity-threshold",
         "-s",
         help="Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO (default from config if set).",
+    ),
+    semantic_mode: str | None = typer.Option(
+        None,
+        "--semantic-mode",
+        help="Semantic mode: source | compiler (default from config if set).",
+    ),
+    project_graph: bool | None = typer.Option(
+        None,
+        "--project-graph/--no-project-graph",
+        help="Enable project-wide graph analysis for directory scans (default from config if set).",
     ),
     config: Path | None = typer.Option(
         None,
@@ -646,37 +1182,24 @@ def analyze(
     if file_path.is_file():
         _validate_contract_path(file_path)
 
-    # Resolve config
-    cfg = load_config(str(config) if config else None)
-
-    # Determine which detectors to run
-    enabled = ["all"]
-    if detectors:
-        enabled = [d.strip() for d in detectors.split(",")]
-    elif cfg.analysis.enabled_detectors != ["all"]:
-        enabled = cfg.analysis.enabled_detectors
-
-    # Severity threshold
-    threshold_name = (severity_threshold or cfg.analysis.severity_threshold).upper()
-    try:
-        threshold = Severity(threshold_name)
-    except ValueError:
-        console.print(f"[{ERR}]Invalid severity threshold: {threshold_name}[/{ERR}]")
-        raise typer.Exit(code=2) from None
+    cfg, enabled, threshold, resolved_semantic_mode, project_graph_enabled, fmt = (
+        _resolve_analysis_config(
+            format=format,
+            detectors=detectors,
+            severity_threshold=severity_threshold,
+            semantic_mode=semantic_mode,
+            project_graph=project_graph,
+            config=config,
+        )
+    )
 
     # Run analysis with a progress bar
     analyzer = StaticAnalyzer(
         enabled_detectors=enabled,
         disabled_detectors=cfg.analysis.disabled_detectors,
         severity_threshold=threshold,
+        semantic_mode=resolved_semantic_mode,
     )
-
-    fmt = (format or cfg.reporting.default_format).lower()
-    if fmt not in {"cli", "json", "markdown", "sarif", "html"}:
-        console.print(
-            f"[{ERR}]Invalid format: {fmt}. Use one of: cli, json, markdown, sarif, html.[/{ERR}]"
-        )
-        raise typer.Exit(code=2)
 
     if update_baseline and baseline_file is None:
         console.print(f"[{ERR}]--update-baseline requires --baseline-file.[/{ERR}]")
@@ -685,13 +1208,7 @@ def analyze(
         console.print(f"[{ERR}]--baseline-diff requires --baseline-file.[/{ERR}]")
         raise typer.Exit(code=2)
 
-    baseline_fingerprints: set[str] = set()
-    if baseline_file is not None:
-        try:
-            baseline_fingerprints = _load_finding_baseline(baseline_file)
-        except ValueError as exc:
-            console.print(f"[{ERR}]Invalid baseline file:[/{ERR}] {exc}")
-            raise typer.Exit(code=2) from exc
+    baseline_fingerprints = _load_baseline_fingerprints(baseline_file)
 
     if file_path.is_dir():
         if fix or fix_dry_run or fix_report:
@@ -726,181 +1243,43 @@ def analyze(
             baseline_fingerprints=baseline_fingerprints,
             baseline_diff=baseline_diff,
             update_baseline=update_baseline,
+            project_graph=project_graph_enabled,
+            severity_threshold=threshold,
+            verification=None,
         )
         return
 
-    def _build_runtime_fallback_report(error: Exception) -> AnalysisReport:
-        return AnalysisReport(
-            file_path=str(file_path),
-            vyper_version=None,
-            findings=[
-                DetectorResult(
-                    detector_name="analyzer_runtime_error",
-                    severity=Severity.HIGH,
-                    confidence=Confidence.LOW,
-                    vulnerability_type=VulnerabilityType.CODE_QUALITY,
-                    title="Analysis fallback mode",
-                    description=(
-                        "Vyper Guard encountered an unexpected analyzer runtime error and returned "
-                        "a best-effort fallback report so output remains structured. "
-                        "Treat this contract as requiring manual review."
-                    ),
-                    line_number=None,
-                    fix_suggestion=(
-                        "Retry with --verbose and share the failing contract snippet with maintainers."
-                    ),
-                    why_flagged="Analyzer runtime exception prevented full detector execution.",
-                    evidence=[f"{type(error).__name__}: {error}"],
-                    why_not_suppressed="Fallback finding is intentionally always emitted to avoid silent pass.",
-                )
-            ],
-            detectors_run=["analyzer_runtime_error"],
-            security_score=0,
-        )
-
-    try:
-        t0 = _time.perf_counter()
-
-        if fmt == "cli":
-            with Progress(
-                SpinnerColumn("dots"),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=25),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-            ) as progress:
-                task = progress.add_task(f"[{ACCENT}]Scanning {file_path.name}…", total=100)
-                progress.update(task, completed=15, description="Parsing source…")
-                report = analyzer.analyze_file(file_path)
-                progress.update(task, completed=100, description="Done!")
-        else:
-            report = analyzer.analyze_file(file_path)
-
-        elapsed_ms = (_time.perf_counter() - t0) * 1000
-
-    except FileLoadError as exc:
-        console.print(f"[{ERR}]Error:[/{ERR}] {exc}")
-        raise typer.Exit(code=2) from exc
-    except GuardianError as exc:
-        console.print(f"[{ERR}]Analysis failed:[/{ERR}] {exc}")
-        raise typer.Exit(code=2) from exc
-    except Exception as exc:
-        elapsed_ms = (_time.perf_counter() - t0) * 1000
-        report = _build_runtime_fallback_report(exc)
+    if project_graph is True:
         console.print(
-            f"[{WARN}]Analyzer fallback:[/{WARN}] encountered runtime error; returning structured best-effort output."
+            f"[{WARN}]Project graph is only available for directory scans; ignoring for file target.[/{WARN}]"
         )
 
-    # Optional AI-assisted triage post-processor (deterministic, verdict-preserving).
-    triage_enabled, triage_min, triage_max_items, triage_mode, fallback_allowed = (
-        _resolve_ai_triage_settings(
-            cfg=cfg,
-            ai=ai,
-            ai_triage=ai_triage,
-            ai_triage_min_severity=ai_triage_min_severity,
-            ai_triage_max_items=ai_triage_max_items,
-            ai_triage_mode=ai_triage_mode,
-            ai_allow_fallback=ai_allow_fallback,
-        )
+    report, elapsed_ms = _run_single_analysis(
+        file_path=file_path,
+        analyzer=analyzer,
+        fmt=fmt,
+        cfg=cfg,
+        ai=ai,
+        ai_triage=ai_triage,
+        ai_triage_min_severity=ai_triage_min_severity,
+        ai_triage_max_items=ai_triage_max_items,
+        ai_triage_mode=ai_triage_mode,
+        ai_llm_model=ai_llm_model,
+        ai_allow_fallback=ai_allow_fallback,
     )
-    if triage_enabled:
-        if triage_mode == "llm":
-            from guardian.agents.llm_triage import LLMTriageError, apply_llm_triage
 
-            llm_model = ai_llm_model or cfg.llm.model
-            llm_key = cfg.llm.api_key or ""
-            try:
-                apply_llm_triage(
-                    report,
-                    file_path.read_text(encoding="utf-8"),
-                    api_key=llm_key,
-                    model=llm_model,
-                    provider=cfg.llm.provider,
-                    base_url=cfg.llm.base_url,
-                    min_severity=triage_min,
-                    max_items=triage_max_items,
-                    temperature=cfg.llm.temperature,
-                )
-            except LLMTriageError as exc:
-                if not fallback_allowed:
-                    console.print(
-                        f"[{ERR}]LLM triage failed:[/{ERR}] {exc}. "
-                        "Re-run with --allow-ai-fallback to enable deterministic fallback."
-                    )
-                    raise typer.Exit(code=2) from exc
-                console.print(
-                    f"[{WARN}]LLM triage unavailable:[/{WARN}] {exc} — falling back to deterministic triage (--allow-ai-fallback)."
-                )
-                _apply_deterministic_triage(
-                    report,
-                    cfg=cfg,
-                    triage_min=triage_min,
-                    triage_max_items=triage_max_items,
-                )
-                _annotate_llm_fallback(report, str(exc))
-        else:
-            _apply_deterministic_triage(
-                report,
-                cfg=cfg,
-                triage_min=triage_min,
-                triage_max_items=triage_max_items,
-            )
-
-    raw_fingerprints = _collect_report_fingerprints(report)
-    if update_baseline and baseline_file is not None:
-        _write_finding_baseline(
-            baseline_file,
-            raw_fingerprints,
-            target=str(file_path),
-        )
-
-    if baseline_diff and baseline_file is not None:
-        baseline_diff_meta = _compute_baseline_diff(raw_fingerprints, baseline_fingerprints)
-        report.analysis_context = dict(report.analysis_context)
-        report.analysis_context["baseline_diff"] = {
-            "file": str(baseline_file),
-            **baseline_diff_meta,
-        }
-
-    findings_before_suppression = len(report.findings)
-    suppressed_count = _apply_finding_baseline(report, baseline_fingerprints)
-    if baseline_file is not None:
-        report.analysis_context = dict(report.analysis_context)
-        report.analysis_context["baseline"] = {
-            "file": str(baseline_file),
-            "entries": len(baseline_fingerprints),
-            "findings_before_suppression": findings_before_suppression,
-            "findings_suppressed": suppressed_count,
-            "findings_active": len(report.findings),
-        }
-    if suppressed_count and fmt == "cli":
-        console.print(
-            f"[{WARN}]Baseline suppression applied:[/{WARN}] {suppressed_count} finding(s) hidden."
-        )
-
-    # Output
-    if fmt == "json":
-        text = export_json(report, output)
-        if not output:
-            typer.echo(text)
-    elif fmt == "sarif":
-        text = export_sarif(report, output)
-        if not output:
-            typer.echo(text)
-    elif fmt == "markdown":
-        text = export_markdown(report, output)
-        if not output:
-            typer.echo(text)
-    elif fmt == "html":
-        text = export_html(report, output)
-        if not output:
-            typer.echo(text)
-    else:
-        _print_rich_report(report, elapsed_ms)
-        if output:
-            export_json(report, output)
+    _emit_single_report(
+        report=report,
+        file_path=file_path,
+        fmt=fmt,
+        output=output,
+        elapsed_ms=elapsed_ms,
+        baseline_file=baseline_file,
+        baseline_fingerprints=baseline_fingerprints,
+        baseline_diff=baseline_diff,
+        update_baseline=update_baseline,
+        verification=None,
+    )
 
     # --fix: auto-remediation
     if fix_dry_run and not fix:
@@ -1029,11 +1408,106 @@ def _compute_baseline_diff(
     }
 
 
+def _verification_markdown_section(verification: dict[str, object] | None) -> list[str]:
+    if not isinstance(verification, dict):
+        return []
+
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    lines = ["## Verification", ""]
+    if summary:
+        lines.append(
+            f"- Summary: passed={summary.get('passed', 0)}, "
+            f"failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, "
+            f"errors={summary.get('errors', 0)}"
+        )
+        lines.append("")
+
+    lines.extend(
+        [
+            "| Suite | Status | Duration (ms) | Exit | Notes | Command |",
+            "|---|---|---:|---:|---|---|",
+        ]
+    )
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "—").upper()
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = result.get("reason") or "—"
+        command = result.get("command") or []
+        if isinstance(command, list):
+            command_text = " ".join(str(part) for part in command)
+        else:
+            command_text = str(command)
+        lines.append(
+            f"| {label} | {status} | {duration if duration is not None else '—'} | "
+            f"{exit_code if exit_code is not None else '—'} | {reason} | `{command_text}` |"
+        )
+
+    return lines
+
+
+def _verification_html_section(verification: dict[str, object] | None) -> str:
+    if not isinstance(verification, dict):
+        return ""
+
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    rows: list[str] = []
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = _html.escape(str(result.get("status") or "—")).upper()
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = _html.escape(str(result.get("reason") or "—"))
+        command = result.get("command") or []
+        if isinstance(command, list):
+            command_text = " ".join(str(part) for part in command)
+        else:
+            command_text = str(command)
+        rows.append(
+            "<tr>"
+            f"<td>{_html.escape(label)}</td>"
+            f"<td>{status}</td>"
+            f"<td>{duration if duration is not None else '—'}</td>"
+            f"<td>{exit_code if exit_code is not None else '—'}</td>"
+            f"<td>{reason}</td>"
+            f"<td>{_html.escape(command_text)}</td>"
+            "</tr>"
+        )
+
+    summary_html = ""
+    if summary:
+        summary_html = (
+            "<p><strong>Summary:</strong> "
+            f"passed={summary.get('passed', 0)}, "
+            f"failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, "
+            f"errors={summary.get('errors', 0)}</p>"
+        )
+
+    default_row = '<tr><td colspan="6">No verification suites executed.</td></tr>'
+    return (
+        "<section class='panel'><h2>Verification</h2>"
+        f"{summary_html}"
+        "<table><thead><tr><th>Suite</th><th>Status</th><th>Duration (ms)</th>"
+        "<th>Exit</th><th>Notes</th><th>Command</th></tr></thead>"
+        f"<tbody>{''.join(rows) if rows else default_row}</tbody>"
+        "</table></section>"
+    )
+
+
 def _project_markdown_report(
     target_dir: Path,
     reports: list[AnalysisReport],
     elapsed_ms: float,
     baseline_diff: dict[str, object] | None = None,
+    project_graph: dict[str, object] | None = None,
+    verification: dict[str, object] | None = None,
 ) -> str:
     summary = _summarize_reports(reports)
     lines = [
@@ -1063,6 +1537,10 @@ def _project_markdown_report(
             f"| `{rel}` | {report.security_score} | {report.grade.value} | {len(report.findings)} |"
         )
 
+    verification_lines = _verification_markdown_section(verification)
+    if verification_lines:
+        lines.extend(["", *verification_lines])
+
     baseline_meta = _project_baseline_meta(reports)
     if baseline_meta is not None:
         lines.extend(
@@ -1090,6 +1568,88 @@ def _project_markdown_report(
                 f"- Unchanged findings: **{baseline_diff.get('unchanged_count', 0)}**",
             ]
         )
+    if project_graph is not None:
+        nodes = project_graph.get("nodes") if isinstance(project_graph, dict) else None
+        edges = project_graph.get("edges") if isinstance(project_graph, dict) else None
+        unresolved = (
+            project_graph.get("unresolved_imports") if isinstance(project_graph, dict) else None
+        )
+        interface_uses = (
+            project_graph.get("interface_uses") if isinstance(project_graph, dict) else None
+        )
+        lines.extend(
+            [
+                "",
+                "## Project Graph",
+                "",
+                f"- Nodes: **{len(nodes) if isinstance(nodes, list) else 0}**",
+                f"- Edges: **{len(edges) if isinstance(edges, list) else 0}**",
+                f"- Unresolved imports: **{len(unresolved) if isinstance(unresolved, list) else 0}**",
+            ]
+        )
+        if isinstance(unresolved, list) and unresolved:
+            lines.extend(
+                [
+                    "",
+                    "### Unresolved Imports",
+                    "",
+                    "| File | Import |",
+                    "|---|---|",
+                ]
+            )
+            for item in unresolved:
+                if not isinstance(item, dict):
+                    continue
+                file_val = item.get("file") or "—"
+                import_val = item.get("import") or "—"
+                lines.append(f"| `{file_val}` | `{import_val}` |")
+
+        if isinstance(interface_uses, list) and interface_uses:
+            status_counts = {"resolved": 0, "missing": 0, "mismatch": 0}
+            for item in interface_uses:
+                if not isinstance(item, dict):
+                    continue
+                status = item.get("status")
+                if status in status_counts:
+                    status_counts[status] += 1
+
+            lines.extend(
+                [
+                    "",
+                    "### Interface Checks",
+                    "",
+                    f"- Resolved: **{status_counts['resolved']}**",
+                    f"- Missing: **{status_counts['missing']}**",
+                    f"- Mismatch: **{status_counts['mismatch']}**",
+                ]
+            )
+
+            non_resolved = [
+                item
+                for item in interface_uses
+                if isinstance(item, dict) and item.get("status") in {"missing", "mismatch"}
+            ]
+            if non_resolved:
+                lines.extend(
+                    [
+                        "",
+                        "| File | Interface | Status | Missing Functions | Line |",
+                        "|---|---|---|---|---|",
+                    ]
+                )
+                for item in non_resolved:
+                    file_val = item.get("file") or "—"
+                    iface = item.get("interface") or "—"
+                    status = item.get("status") or "—"
+                    missing = item.get("missing_functions")
+                    if isinstance(missing, list) and missing:
+                        missing_text = ", ".join(str(name) for name in missing)
+                    else:
+                        missing_text = "—"
+                    line = item.get("line") or "—"
+                    lines.append(
+                        f"| `{file_val}` | `{iface}` | {status} | `{missing_text}` | {line} |"
+                    )
     return "\n".join(lines) + "\n"
 
 
@@ -1098,6 +1658,8 @@ def _project_html_report(
     reports: list[AnalysisReport],
     elapsed_ms: float,
     baseline_diff: dict[str, object] | None = None,
+    project_graph: dict[str, object] | None = None,
+    verification: dict[str, object] | None = None,
 ) -> str:
     summary = _summarize_reports(reports)
     total_findings = max(1, summary["total"])
@@ -1180,7 +1742,92 @@ def _project_html_report(
         else ""
     )
 
+    project_graph_html = ""
+    if project_graph is not None and isinstance(project_graph, dict):
+        nodes = project_graph.get("nodes")
+        edges = project_graph.get("edges")
+        unresolved = project_graph.get("unresolved_imports")
+        interface_uses = project_graph.get("interface_uses")
+        unresolved_count = len(unresolved) if isinstance(unresolved, list) else 0
+        interface_use_list = interface_uses if isinstance(interface_uses, list) else []
+        status_counts = {"resolved": 0, "missing": 0, "mismatch": 0}
+        for item in interface_use_list:
+            if not isinstance(item, dict):
+                continue
+            status = item.get("status")
+            if status in status_counts:
+                status_counts[status] += 1
+
+        unresolved_table = ""
+        if unresolved_count:
+            rows = []
+            for item in unresolved:
+                if not isinstance(item, dict):
+                    continue
+                file_val = _html.escape(str(item.get("file") or "—"))
+                import_val = _html.escape(str(item.get("import") or "—"))
+                rows.append(f"<tr><td>{file_val}</td><td>{import_val}</td></tr>")
+            if rows:
+                unresolved_table = (
+                    "<h3>Unresolved Imports</h3>"
+                    "<table><thead><tr><th>File</th><th>Import</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>"
+                )
+
+        interface_table = ""
+        if interface_use_list:
+            rows = []
+            for item in interface_use_list:
+                if not isinstance(item, dict):
+                    continue
+                status = item.get("status")
+                if status not in {"missing", "mismatch"}:
+                    continue
+                file_val = _html.escape(str(item.get("file") or "—"))
+                iface = _html.escape(str(item.get("interface") or "—"))
+                missing = item.get("missing_functions")
+                if isinstance(missing, list) and missing:
+                    missing_text = ", ".join(str(name) for name in missing)
+                else:
+                    missing_text = "—"
+                missing_val = _html.escape(missing_text)
+                line = _html.escape(str(item.get("line") or "—"))
+                rows.append(
+                    "<tr>"
+                    f"<td>{file_val}</td>"
+                    f"<td>{iface}</td>"
+                    f"<td>{_html.escape(str(status))}</td>"
+                    f"<td>{missing_val}</td>"
+                    f"<td>{line}</td>"
+                    "</tr>"
+                )
+            interface_table = (
+                "<h3>Interface Checks</h3>"
+                "<ul>"
+                f"<li><strong>Resolved:</strong> {status_counts['resolved']}</li>"
+                f"<li><strong>Missing:</strong> {status_counts['missing']}</li>"
+                f"<li><strong>Mismatch:</strong> {status_counts['mismatch']}</li>"
+                "</ul>"
+            )
+            if rows:
+                interface_table += (
+                    "<table><thead><tr><th>File</th><th>Interface</th><th>Status</th>"
+                    "<th>Missing Functions</th><th>Line</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>"
+                )
+        project_graph_html = (
+            "<section class='panel'><h2>Project Graph</h2><ul>"
+            + f"<li><strong>Nodes:</strong> {len(nodes) if isinstance(nodes, list) else 0}</li>"
+            + f"<li><strong>Edges:</strong> {len(edges) if isinstance(edges, list) else 0}</li>"
+            + f"<li><strong>Unresolved imports:</strong> {unresolved_count}</li>"
+            + "</ul>"
+            + unresolved_table
+            + interface_table
+            + "</section>"
+        )
+
     avg_score = round(sum(r.security_score for r in reports) / max(1, len(reports)))
+    verification_html = _verification_html_section(verification)
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -1203,6 +1850,7 @@ def _project_html_report(
         .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }}
         .panel {{ background:var(--surface); border:1px solid var(--stroke); border-radius:14px; padding:14px; }}
         .panel h2 {{ margin:0 0 10px 0; font-size:14px; color:#1e3a8a; text-transform:uppercase; letter-spacing:.08em; }}
+        .panel h3 {{ margin:12px 0 6px 0; font-size:12px; color:#1f2937; text-transform:uppercase; letter-spacing:.06em; }}
         .sev-row {{ display:grid; grid-template-columns:160px 1fr 46px; align-items:center; gap:8px; margin-bottom:8px; }}
         .label {{ color:var(--muted); font-size:13px; display:flex; align-items:center; gap:8px; }}
         .dot {{ width:10px; height:10px; border-radius:999px; display:inline-block; }}
@@ -1247,6 +1895,10 @@ def _project_html_report(
 
         {baseline_html}
 
+        {verification_html}
+
+        {project_graph_html}
+
         <section class=\"panel\" style=\"margin-top:14px;\">
             <h2>Issue Report</h2>
             <table>
@@ -1267,6 +1919,8 @@ def _project_json_payload(
     reports: list[AnalysisReport],
     elapsed_ms: float,
     baseline_diff: dict[str, object] | None = None,
+    project_graph: dict[str, object] | None = None,
+    verification: dict[str, object] | None = None,
 ) -> dict[str, object]:
     summary = _summarize_reports(reports)
     payload: dict[str, object] = {
@@ -1287,6 +1941,10 @@ def _project_json_payload(
         payload["baseline"] = baseline_meta
     if baseline_diff is not None:
         payload["baseline_diff"] = baseline_diff
+    if project_graph is not None:
+        payload["project_graph"] = project_graph
+    if verification is not None:
+        payload["verification"] = verification
     return payload
 
 
@@ -1325,6 +1983,8 @@ def _project_sarif_payload(
     target_dir: Path,
     reports: list[AnalysisReport],
     baseline_diff: dict[str, object] | None = None,
+    project_graph: dict[str, object] | None = None,
+    verification: dict[str, object] | None = None,
 ) -> dict[str, object]:
     rules_by_id: dict[str, dict[str, object]] = {}
     results: list[dict[str, object]] = []
@@ -1373,11 +2033,22 @@ def _project_sarif_payload(
         run_properties = payload["runs"][0]["properties"]
         if isinstance(run_properties, dict):
             run_properties["baseline_diff"] = baseline_diff
+    if project_graph is not None:
+        run_properties = payload["runs"][0]["properties"]
+        if isinstance(run_properties, dict):
+            run_properties["project_graph"] = project_graph
+    if verification is not None:
+        run_properties = payload["runs"][0]["properties"]
+        if isinstance(run_properties, dict):
+            run_properties["verification"] = verification
     return payload
 
 
 def _print_project_cli_summary(
-    target_dir: Path, reports: list[AnalysisReport], elapsed_ms: float
+    target_dir: Path,
+    reports: list[AnalysisReport],
+    elapsed_ms: float,
+    verification: dict[str, object] | None = None,
 ) -> None:
     summary = _summarize_reports(reports)
     score_avg = round(sum(r.security_score for r in reports) / max(1, len(reports)))
@@ -1416,6 +2087,72 @@ def _print_project_cli_summary(
     console.print(per_file)
     console.print()
 
+    _print_verification_cli(verification)
+
+
+def _print_verification_cli(verification: dict[str, object] | None) -> None:
+    if not isinstance(verification, dict):
+        return
+
+    console.print(Rule("[bold]✅ Verification[/bold]", style=ACCENT))
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    if summary:
+        console.print(
+            f"[dim]passed={summary.get('passed', 0)}, failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, errors={summary.get('errors', 0)}[/dim]"
+        )
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True)
+    table.add_column("Suite", style=f"bold {ACCENT}")
+    table.add_column("Status")
+    table.add_column("Duration (ms)", justify="right")
+    table.add_column("Exit", justify="right")
+    table.add_column("Notes")
+
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "—")
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = str(result.get("reason") or "—")
+        table.add_row(
+            label,
+            status,
+            str(duration if duration is not None else "—"),
+            str(exit_code if exit_code is not None else "—"),
+            reason,
+        )
+
+    console.print(table)
+    console.print()
+
+
+def _apply_project_findings(
+    reports: list[AnalysisReport],
+    findings_by_file: dict[str, list[DetectorResult]],
+    severity_threshold: Severity,
+) -> None:
+    if not findings_by_file:
+        return
+    severity_order = list(Severity)
+    threshold_idx = severity_order.index(severity_threshold)
+    for report in reports:
+        extras = findings_by_file.get(str(report.file_path), [])
+        if not extras:
+            continue
+        filtered = [
+            finding
+            for finding in extras
+            if severity_order.index(finding.severity) <= threshold_idx
+        ]
+        if not filtered:
+            continue
+        report.findings.extend(filtered)
+        score, grade = score_report(report)
+        report.security_score = score
+        report.grade = grade
+
 
 def _analyze_directory_target(
     *,
@@ -1428,7 +2165,10 @@ def _analyze_directory_target(
     baseline_fingerprints: set[str],
     baseline_diff: bool,
     update_baseline: bool,
-) -> None:
+    project_graph: bool,
+    severity_threshold: Severity,
+    verification: dict[str, object] | None,
+) -> list[AnalysisReport]:
     vy_files = sorted(path for path in target_dir.rglob("*.vy") if path.is_file())
     if not vy_files:
         console.print(
@@ -1459,6 +2199,12 @@ def _analyze_directory_target(
     else:
         for contract in vy_files:
             reports.append(analyzer.analyze_file(contract))
+
+    project_graph_payload: dict[str, object] | None = None
+    if project_graph:
+        graph_result = build_project_graph(target_dir, vy_files)
+        project_graph_payload = graph_result.graph
+        _apply_project_findings(reports, graph_result.findings, severity_threshold)
 
     raw_fingerprints: set[str] = set()
     for report in reports:
@@ -1501,7 +2247,14 @@ def _analyze_directory_target(
     elapsed_ms = (_time.perf_counter() - t0) * 1000
 
     if fmt == "json":
-        payload = _project_json_payload(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        payload = _project_json_payload(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff_meta,
+            project_graph=project_graph_payload,
+            verification=verification,
+        )
         text = _json.dumps(payload, indent=2, ensure_ascii=False)
         if output:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -1509,7 +2262,13 @@ def _analyze_directory_target(
         else:
             typer.echo(text)
     elif fmt == "sarif":
-        payload = _project_sarif_payload(target_dir, reports, baseline_diff_meta)
+        payload = _project_sarif_payload(
+            target_dir,
+            reports,
+            baseline_diff_meta,
+            project_graph=project_graph_payload,
+            verification=verification,
+        )
         text = _json.dumps(payload, indent=2, ensure_ascii=False)
         if output:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -1517,28 +2276,57 @@ def _analyze_directory_target(
         else:
             typer.echo(text)
     elif fmt == "markdown":
-        text = _project_markdown_report(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        text = _project_markdown_report(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff_meta,
+            project_graph=project_graph_payload,
+            verification=verification,
+        )
         if output:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(text, encoding="utf-8")
         else:
             typer.echo(text)
     elif fmt == "html":
-        text = _project_html_report(target_dir, reports, elapsed_ms, baseline_diff_meta)
+        text = _project_html_report(
+            target_dir,
+            reports,
+            elapsed_ms,
+            baseline_diff_meta,
+            project_graph=project_graph_payload,
+            verification=verification,
+        )
         if output:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(text, encoding="utf-8")
         else:
             typer.echo(text)
     else:
-        _print_project_cli_summary(target_dir, reports, elapsed_ms)
+        _print_project_cli_summary(target_dir, reports, elapsed_ms, verification)
+        if project_graph_payload:
+            unresolved = project_graph_payload.get("unresolved_imports")
+            if isinstance(unresolved, list) and unresolved:
+                console.print(
+                    f"[{WARN}]Unresolved imports detected:[/{WARN}] {len(unresolved)} (see project graph output)."
+                )
         if output:
-            payload = _project_json_payload(target_dir, reports, elapsed_ms, baseline_diff_meta)
+            payload = _project_json_payload(
+                target_dir,
+                reports,
+                elapsed_ms,
+                baseline_diff_meta,
+                project_graph=project_graph_payload,
+                verification=verification,
+            )
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(_json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if ci and any(report.findings for report in reports):
         raise typer.Exit(code=1)
+
+    return reports
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1561,6 +2349,8 @@ def scan(
     update_baseline: bool = typer.Option(False, "--update-baseline"),
     detectors: str | None = typer.Option(None, "--detectors", "-d"),
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
+    semantic_mode: str | None = typer.Option(None, "--semantic-mode"),
+    project_graph: bool | None = typer.Option(None, "--project-graph/--no-project-graph"),
     config: Path | None = typer.Option(None, "--config", "-c"),
     ci: bool = typer.Option(False, "--ci"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -1575,7 +2365,7 @@ def scan(
     ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
     ai_allow_fallback: bool = typer.Option(False, "--allow-ai-fallback"),
-) -> None:
+    ) -> None:
     """Alias for 'analyze' — scan a Vyper contract for vulnerabilities."""
     analyze(
         file_path=file_path,
@@ -1586,6 +2376,8 @@ def scan(
         update_baseline=update_baseline,
         detectors=detectors,
         severity_threshold=severity_threshold,
+        semantic_mode=semantic_mode,
+        project_graph=project_graph,
         config=config,
         ci=ci,
         verbose=verbose,
@@ -1600,6 +2392,284 @@ def scan(
         ai_triage_mode=ai_triage_mode,
         ai_llm_model=ai_llm_model,
         ai_allow_fallback=ai_allow_fallback,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  verify / test / fuzz
+# ═══════════════════════════════════════════════════════════════════
+
+
+@app.command()
+def verify(
+    file_path: Path = typer.Argument(
+        ...,
+        help="Path to the .vy contract or project directory to verify.",
+        exists=True,
+        readable=True,
+    ),
+    format: str | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="Output format: cli, json, markdown, sarif, html (default from config if set).",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write report to this file (json/markdown/sarif/html).",
+    ),
+    baseline_file: Path | None = typer.Option(
+        None,
+        "--baseline-file",
+        help="Optional finding baseline JSON file (suppresses matching fingerprints).",
+    ),
+    baseline_diff: bool = typer.Option(
+        False,
+        "--baseline-diff",
+        help="Emit baseline diff metadata (new/resolved/unchanged) against --baseline-file.",
+    ),
+    update_baseline: bool = typer.Option(
+        False,
+        "--update-baseline",
+        help="Write current finding fingerprints to --baseline-file.",
+    ),
+    detectors: str | None = typer.Option(
+        None,
+        "--detectors",
+        "-d",
+        help="Comma-separated detector names to run (default: all).",
+    ),
+    severity_threshold: str | None = typer.Option(
+        None,
+        "--severity-threshold",
+        "-s",
+        help="Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO (default from config if set).",
+    ),
+    semantic_mode: str | None = typer.Option(
+        None,
+        "--semantic-mode",
+        help="Semantic mode: source | compiler (default from config if set).",
+    ),
+    project_graph: bool | None = typer.Option(
+        None,
+        "--project-graph/--no-project-graph",
+        help="Enable project-wide graph analysis for directory scans (default from config if set).",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to a .guardianrc config file.",
+    ),
+    ci: bool = typer.Option(
+        False,
+        "--ci",
+        help="CI mode — exit with code 1 if findings exist or verification fails.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose / debug output.",
+    ),
+    ai_triage: bool | None = typer.Option(
+        None,
+        "--ai-triage/--no-ai-triage",
+        help="Enable/disable optional AI-assisted triage metadata (post-processor; does not alter findings).",
+    ),
+    ai: bool = typer.Option(
+        False,
+        "--ai",
+        help="Enable AI-assisted audit orchestration (preferred alias for AI triage mode).",
+    ),
+    ai_triage_min_severity: str | None = typer.Option(
+        None,
+        "--ai-triage-min-severity",
+        help="Minimum severity to include in triage: CRITICAL, HIGH, MEDIUM, LOW, INFO (default from config if set).",
+    ),
+    ai_triage_max_items: int | None = typer.Option(
+        None,
+        "--ai-triage-max-items",
+        min=1,
+        help="Maximum number of triage items to emit (default from config if set).",
+    ),
+    ai_triage_mode: str | None = typer.Option(
+        None,
+        "--ai-triage-mode",
+        help="AI triage mode: deterministic | llm (default from config if set).",
+    ),
+    ai_llm_model: str | None = typer.Option(
+        None,
+        "--ai-llm-model",
+        help="Override LLM model for --ai-triage-mode llm.",
+    ),
+    ai_allow_fallback: bool = typer.Option(
+        False,
+        "--allow-ai-fallback",
+        help="Allow deterministic fallback when LLM triage fails (disabled by default).",
+    ),
+    unit_cmd: str | None = typer.Option(
+        None,
+        "--unit-cmd",
+        help="Command to run unit tests (overrides config).",
+    ),
+    fuzz_cmd: str | None = typer.Option(
+        None,
+        "--fuzz-cmd",
+        help="Command to run fuzz tests (overrides config).",
+    ),
+    run_unit: bool = typer.Option(
+        True,
+        "--unit/--no-unit",
+        help="Enable or disable unit test execution.",
+    ),
+    run_fuzz: bool = typer.Option(
+        True,
+        "--fuzz/--no-fuzz",
+        help="Enable or disable fuzz test execution.",
+    ),
+    test_timeout: int | None = typer.Option(
+        None,
+        "--test-timeout",
+        help="Timeout in seconds for each test suite (default from config).",
+    ),
+    test_output_limit: int | None = typer.Option(
+        None,
+        "--test-output-limit",
+        help="Max characters captured per test output stream (default from config).",
+    ),
+) -> None:
+    """Run static analysis plus unit/fuzz verification in one report."""
+    _run_verification_flow(
+        file_path=file_path,
+        format=format,
+        output=output,
+        baseline_file=baseline_file,
+        baseline_diff=baseline_diff,
+        update_baseline=update_baseline,
+        detectors=detectors,
+        severity_threshold=severity_threshold,
+        semantic_mode=semantic_mode,
+        project_graph=project_graph,
+        config=config,
+        ci=ci,
+        verbose=verbose,
+        ai_triage=ai_triage,
+        ai=ai,
+        ai_triage_min_severity=ai_triage_min_severity,
+        ai_triage_max_items=ai_triage_max_items,
+        ai_triage_mode=ai_triage_mode,
+        ai_llm_model=ai_llm_model,
+        ai_allow_fallback=ai_allow_fallback,
+        unit_cmd=unit_cmd,
+        fuzz_cmd=fuzz_cmd,
+        run_unit=run_unit,
+        run_fuzz=run_fuzz,
+        test_timeout=test_timeout,
+        test_output_limit=test_output_limit,
+        run_static=True,
+    )
+
+
+@app.command()
+def test(
+    file_path: Path = typer.Argument(
+        ...,
+        help="Path to the project or contract scope for unit tests.",
+        exists=True,
+        readable=True,
+    ),
+    format: str | None = typer.Option(None, "--format", "-f"),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ci: bool = typer.Option(False, "--ci"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    unit_cmd: str | None = typer.Option(None, "--unit-cmd"),
+    run_unit: bool = typer.Option(True, "--unit/--no-unit"),
+    test_timeout: int | None = typer.Option(None, "--test-timeout"),
+    test_output_limit: int | None = typer.Option(None, "--test-output-limit"),
+) -> None:
+    """Run unit tests only and emit a verification report."""
+    _run_verification_flow(
+        file_path=file_path,
+        format=format,
+        output=output,
+        baseline_file=None,
+        baseline_diff=False,
+        update_baseline=False,
+        detectors=None,
+        severity_threshold=None,
+        semantic_mode=None,
+        project_graph=None,
+        config=config,
+        ci=ci,
+        verbose=verbose,
+        ai_triage=None,
+        ai=False,
+        ai_triage_min_severity=None,
+        ai_triage_max_items=None,
+        ai_triage_mode=None,
+        ai_llm_model=None,
+        ai_allow_fallback=False,
+        unit_cmd=unit_cmd,
+        fuzz_cmd=None,
+        run_unit=run_unit,
+        run_fuzz=False,
+        test_timeout=test_timeout,
+        test_output_limit=test_output_limit,
+        run_static=False,
+    )
+
+
+@app.command()
+def fuzz(
+    file_path: Path = typer.Argument(
+        ...,
+        help="Path to the project or contract scope for fuzz tests.",
+        exists=True,
+        readable=True,
+    ),
+    format: str | None = typer.Option(None, "--format", "-f"),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ci: bool = typer.Option(False, "--ci"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    fuzz_cmd: str | None = typer.Option(None, "--fuzz-cmd"),
+    run_fuzz: bool = typer.Option(True, "--fuzz/--no-fuzz"),
+    test_timeout: int | None = typer.Option(None, "--test-timeout"),
+    test_output_limit: int | None = typer.Option(None, "--test-output-limit"),
+) -> None:
+    """Run fuzz tests only and emit a verification report."""
+    _run_verification_flow(
+        file_path=file_path,
+        format=format,
+        output=output,
+        baseline_file=None,
+        baseline_diff=False,
+        update_baseline=False,
+        detectors=None,
+        severity_threshold=None,
+        semantic_mode=None,
+        project_graph=None,
+        config=config,
+        ci=ci,
+        verbose=verbose,
+        ai_triage=None,
+        ai=False,
+        ai_triage_min_severity=None,
+        ai_triage_max_items=None,
+        ai_triage_mode=None,
+        ai_llm_model=None,
+        ai_allow_fallback=False,
+        unit_cmd=None,
+        fuzz_cmd=fuzz_cmd,
+        run_unit=False,
+        run_fuzz=run_fuzz,
+        test_timeout=test_timeout,
+        test_output_limit=test_output_limit,
+        run_static=False,
     )
 
 
@@ -1838,6 +2908,11 @@ def flow_view(
     format: str = typer.Option(
         "cli", "--format", "-f", help="Output format: cli, json, markdown, mermaid."
     ),
+    semantic_mode: str | None = typer.Option(
+        None,
+        "--semantic-mode",
+        help="Semantic mode: source | compiler (default from config if set).",
+    ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write output artifact to file."
     ),
@@ -1846,10 +2921,19 @@ def flow_view(
     _validate_contract_path(file_path)
     from guardian.analyzer.ast_parser import parse_vyper_source
     from guardian.analyzer.semantic import build_semantic_summary
+    from guardian.utils.config import load_config
     from guardian.utils.helpers import load_vyper_source
 
     source = load_vyper_source(file_path)
     contract = parse_vyper_source(source, str(file_path))
+    cfg = load_config(None)
+    resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
+    if resolved_semantic_mode not in {"source", "compiler"}:
+        console.print(
+            f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
+        )
+        raise typer.Exit(code=2)
+    contract = contract.model_copy(update={"semantic_mode": resolved_semantic_mode})
     summary = build_semantic_summary(contract)
 
     fn_names = [f.name for f in contract.functions]
@@ -1945,6 +3029,11 @@ def fix_cmd(
     output: Path | None = typer.Option(None, "--output", "-o"),
     detectors: str | None = typer.Option(None, "--detectors", "-d"),
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
+    semantic_mode: str | None = typer.Option(
+        None,
+        "--semantic-mode",
+        help="Semantic mode: source | compiler (default from config if set).",
+    ),
     config: Path | None = typer.Option(None, "--config", "-c"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     fix_dry_run: bool = typer.Option(False, "--fix-dry-run"),
@@ -1971,6 +3060,7 @@ def fix_cmd(
         update_baseline=False,
         detectors=detectors,
         severity_threshold=severity_threshold,
+        semantic_mode=semantic_mode,
         config=config,
         ci=False,
         verbose=verbose,
@@ -2012,6 +3102,11 @@ def analyze_address(
         None, "--detectors", "-d", help="Comma-separated detector names."
     ),
     severity_threshold: str | None = typer.Option(None, "--severity-threshold", "-s"),
+    semantic_mode: str | None = typer.Option(
+        None,
+        "--semantic-mode",
+        help="Semantic mode: source | compiler (default from config if set).",
+    ),
     ci: bool = typer.Option(False, "--ci"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     ai: bool = typer.Option(
@@ -2122,10 +3217,18 @@ def analyze_address(
         console.print(f"[{ERR}]Invalid severity threshold: {threshold_name}[/{ERR}]")
         raise typer.Exit(code=2) from None
 
+    resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
+    if resolved_semantic_mode not in {"source", "compiler"}:
+        console.print(
+            f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
+        )
+        raise typer.Exit(code=2)
+
     analyzer = StaticAnalyzer(
         enabled_detectors=enabled,
         disabled_detectors=cfg.analysis.disabled_detectors,
         severity_threshold=threshold,
+        semantic_mode=resolved_semantic_mode,
     )
 
     fmt = (format or cfg.reporting.default_format).lower()
@@ -3208,6 +4311,11 @@ def _print_rich_report(report: AnalysisReport, elapsed_ms: float = 0.0) -> None:
 
     console.print(meta_table)
     console.print()
+    _print_verification_cli(
+        report.analysis_context.get("verification")
+        if isinstance(report.analysis_context, dict)
+        else None
+    )
 
     # ── Score card + Severity breakdown side by side ──
     score = report.security_score
@@ -5249,7 +6357,11 @@ analysis:
   # Detectors to skip
   disabled_detectors: []
   # Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO
-  severity_threshold: LOW
+    severity_threshold: LOW
+    # Semantic mode: source (fast, default) | compiler (optional, deeper)
+    semantic_mode: source
+    # Project graph (directory scans only)
+    project_graph: false
 
 reporting:
     # Default output format: cli, json, markdown, sarif, html

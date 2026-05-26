@@ -76,6 +76,8 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         con.print("  [dim]Analysis may be incomplete due to detector runtime errors.[/dim]")
         con.print()
 
+    _print_verification_section(con, report)
+
     if not report.findings:
         con.print("  [green bold]✅ No issues found — looking good![/green bold]")
         con.print()
@@ -150,4 +152,48 @@ def _print_footer(con: Console, report: AnalysisReport) -> None:
         f"{health_msg} │ "
         f"Use [bold]--fix[/bold] to auto-patch[/dim]"
     )
+    con.print()
+
+
+def _print_verification_section(con: Console, report: AnalysisReport) -> None:
+    verification = (
+        report.analysis_context.get("verification")
+        if isinstance(report.analysis_context, dict)
+        else None
+    )
+    if not isinstance(verification, dict):
+        return
+
+    con.print("  [bold]Verification[/bold]")
+    summary = verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
+    if summary:
+        con.print(
+            f"  [dim]passed={summary.get('passed', 0)}, failed={summary.get('failed', 0)}, "
+            f"skipped={summary.get('skipped', 0)}, errors={summary.get('errors', 0)}[/dim]"
+        )
+
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True)
+    table.add_column("Suite", style="bold")
+    table.add_column("Status")
+    table.add_column("Duration (ms)", justify="right")
+    table.add_column("Exit", justify="right")
+    table.add_column("Notes")
+
+    for key, label in (("unit", "Unit tests"), ("fuzz", "Fuzz tests")):
+        result = verification.get(key, {})
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "—")
+        duration = result.get("duration_ms")
+        exit_code = result.get("exit_code")
+        reason = str(result.get("reason") or "—")
+        table.add_row(
+            label,
+            status,
+            str(duration if duration is not None else "—"),
+            str(exit_code if exit_code is not None else "—"),
+            reason,
+        )
+
+    con.print(table)
     con.print()
