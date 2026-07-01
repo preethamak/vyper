@@ -18,7 +18,9 @@ from pathlib import Path
 from guardian.analyzer.ast_parser import parse_vyper_source
 from guardian.analyzer.compiler_check import check_compiler_version
 from guardian.analyzer.confidence import calibrate_confidence
-from guardian.analyzer.semantic import build_semantic_summary
+from guardian.analyzer.exploit_verifier import attach_exploit_verification
+from guardian.analyzer.metrics import compute_contract_complexity
+from guardian.analyzer.semantic import build_semantic_summary, check_vyper_available
 from guardian.analyzer.vyper_detector import ALL_DETECTORS, DETECTOR_MAP, BaseDetector
 from guardian.models import (
     AnalysisReport,
@@ -51,7 +53,7 @@ class StaticAnalyzer:
         enabled_detectors: Sequence[str] = ("all",),
         disabled_detectors: Sequence[str] = (),
         severity_threshold: Severity = Severity.INFO,
-        semantic_mode: str = "source",
+        semantic_mode: str = "auto",
     ) -> None:
         self._detectors = self._resolve_detectors(enabled_detectors, disabled_detectors)
         self._severity_threshold = severity_threshold
@@ -141,15 +143,21 @@ class StaticAnalyzer:
         filtered = [f for f in all_findings if severity_order.index(f.severity) <= threshold_idx]
         calibrate_confidence(filtered)
         _attach_semantic_context(filtered, contract)
+        attach_exploit_verification(filtered, contract)
 
         # 4. Compute score.
         score = _compute_score(filtered)
         score = _apply_failed_detector_penalty(score, len(failed_detectors))
         grade = SecurityGrade.from_score(score)
+        complexity = compute_contract_complexity(contract)
 
         return AnalysisReport(
             file_path=contract.file_path,
             vyper_version=contract.pragma_version,
+            analysis_context={
+                "semantic_mode": contract.semantic_mode,
+                "complexity_metrics": complexity.as_dict(),
+            },
             findings=filtered,
             detectors_run=detector_names_run,
             failed_detectors=failed_detectors,
@@ -185,6 +193,8 @@ class StaticAnalyzer:
     @staticmethod
     def _normalize_semantic_mode(mode: str) -> str:
         normalized = mode.strip().lower()
+        if normalized == "auto":
+            return "compiler" if check_vyper_available() is not None else "source"
         if normalized not in {"source", "compiler"}:
             raise ValueError(f"Unsupported semantic mode: {mode}")
         return normalized

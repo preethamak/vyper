@@ -1,13 +1,14 @@
 """Vyper-specific vulnerability detectors.
 
-This module defines the ``BaseDetector`` abstract class and ships eleven
+This module defines the ``BaseDetector`` abstract class and ships 22
 concrete detectors that operate on parsed ``ContractInfo`` objects.  By
 default detectors use the **source-level parse** produced by ``ast_parser``;
 the Vyper compiler is optional and only used when semantic mode is set to
 ``compiler``.
 
-Detector catalogue
-------------------
+Detector catalogue (v0.5.0)
+---------------------------
+ Original 12 detectors:
  1. MissingNonreentrantDetector
  2. UnsafeRawCallDetector
  3. UncheckedSendDetector
@@ -19,7 +20,19 @@ Detector catalogue
  9. UnprotectedStateChangeDetector
 10. SendInLoopDetector               (DoS via revert)
 11. UncheckedSubtractionDetector     (missing balance check)
-12. CEIViolationDetector             (call before state update)
+12. CEIViolationDetector             (CFG-aware call before state update)
+
+ New v0.5.0 detectors:
+13. TxOriginAuthDetector             (tx.origin authentication)
+14. MissingZeroAddressCheckDetector  (address set without zero-check)
+15. WeakRandomnessDetector           (block properties as random seed)
+16. LockedEtherDetector              (payable with no withdraw)
+17. ShadowedStateVariableDetector    (local var shadows state var)
+18. MissingInputValidationDetector   (amount/value args with no assert)
+19. UnsafeAssemblyDetector           (inline assembly usage)
+20. MissingReturnValueDetector       (interface call result unchecked)
+21. DivisionBeforeMultiplicationDetector (precision loss pattern)
+22. IncorrectERC20ReturnDetector     (ERC20 transfer return unchecked)
 """
 
 from __future__ import annotations
@@ -28,6 +41,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from guardian.analyzer.cfg import build_cfg
 from guardian.analyzer.semantic import build_semantic_summary
 from guardian.models import (
     Confidence,
@@ -1130,7 +1144,7 @@ class CEIViolationDetector(BaseDetector):
         return None
 
     def _cei_violations(self, body_lines: list[str]) -> list[tuple[int, str]]:
-        """Return all external calls that have a later state write."""
+        """Return all external calls that have a later state write (line-order fallback)."""
         out: list[tuple[int, str]] = []
         for i, line in enumerate(body_lines):
             stripped = _strip_inline_comment(line).strip()
@@ -1163,23 +1177,70 @@ class CEIViolationDetector(BaseDetector):
             ):
                 continue
 
-            body_lines = func.body_lines
-            violations = self._cei_violations(body_lines)
-            if not violations:
+            # ---------------------------------------------------------------
+            # CFG-aware check: only flag if a reachable path goes from an
+            # external-call block to a state-write block.  This eliminates
+            # the classic false positive where the state write is in an else-
+            # branch that cannot be reached after the external call.
+            # ---------------------------------------------------------------
+            try:
+                cfg = build_cfg(func)
+                if not cfg.state_write_after_external_call_in_same_path():
+                    continue
+            except Exception:
+                # CFG build failed — fall back to line-order check
+                body_lines = func.body_lines
+                violations = self._cei_violations(body_lines)
+                if not violations:
+                    continue
+                for _call_idx, call_line in violations:
+                    is_guarded = func.is_nonreentrant
+                    results.append(
+                        self._make_result(
+                            title=f"CEI violation in {func.name}()",
+                            description=(
+                                f"``{func.name}()`` performs an external call "
+                                f"(``{call_line.split('(')[0].strip()}``) "
+                                f"**before** updating state (fallback analysis). "
+                                f"Move all state changes above the external call."
+                                + (
+                                    " ``@nonreentrant`` is present, so this is "
+                                    "reported as a lower-severity hygiene issue."
+                                    if is_guarded
+                                    else ""
+                                )
+                            ),
+                            confidence=Confidence.LOW if is_guarded else Confidence.MEDIUM,
+                            severity=Severity.LOW if is_guarded else self.SEVERITY,
+                            line_number=func.start_line,
+                            source_snippet=_excerpt(contract, func),
+                            fix_suggestion=(
+                                "Reorder the function: perform all state updates "
+                                "(self.x = …) BEFORE any external calls."
+                            ),
+                        )
+                    )
                 continue
-            for call_idx, call_line in violations:
-                abs_line = func.end_line - len(func.body_lines) + 1 + call_idx
-                is_guarded = func.is_nonreentrant
+
+            # CFG confirmed a reachable CEI violation path.
+            # Generate one finding per violating external-call site so that
+            # functions with multiple violating calls get multiple findings.
+            violations = self._cei_violations(func.body_lines)
+            if not violations:
+                violations = [(0, "external call")]
+            is_guarded = func.is_nonreentrant
+            for call_idx, call_snippet in violations:
+                call_abs_line = func.end_line - len(func.body_lines) + 1 + call_idx
                 results.append(
                     self._make_result(
                         title=f"CEI violation in {func.name}()",
                         description=(
                             f"``{func.name}()`` performs an external call "
-                            f"(``{call_line.split('(')[0].strip()}``) "
-                            f"**before** updating state. An attacker can "
-                            f"re-enter the function before the state is "
-                            f"updated. Move all state changes above the "
-                            f"external call (Checks → Effects → Interactions)."
+                            f"(``{call_snippet.split('(')[0].strip() if call_snippet else 'external call'}``) "
+                            f"**before** updating state on a reachable execution path. "
+                            f"An attacker can re-enter before state is committed. "
+                            f"Move all state changes above the external call "
+                            f"(Checks → Effects → Interactions)."
                             + (
                                 " ``@nonreentrant`` is present, so this is "
                                 "reported as a lower-severity hygiene issue."
@@ -1189,7 +1250,7 @@ class CEIViolationDetector(BaseDetector):
                         ),
                         confidence=Confidence.MEDIUM if is_guarded else Confidence.HIGH,
                         severity=Severity.LOW if is_guarded else self.SEVERITY,
-                        line_number=abs_line,
+                        line_number=call_abs_line,
                         source_snippet=_excerpt(contract, func),
                         fix_suggestion=(
                             "Reorder the function: perform all state updates "
@@ -1203,10 +1264,563 @@ class CEIViolationDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
+# 13. tx.origin used for authentication
+# ---------------------------------------------------------------------------
+
+
+_TX_ORIGIN_AUTH_RE = re.compile(
+    r"\b(?:assert|if|elif)\b[^\n#]*\btx\.origin\b"
+    r"|\btx\.origin\s*=="
+    r"|==\s*tx\.origin\b",
+)
+
+
+class TxOriginAuthDetector(BaseDetector):
+    NAME = "tx_origin_auth"
+    DESCRIPTION = (
+        "Detect use of ``tx.origin`` for authentication. ``tx.origin`` refers "
+        "to the original transaction sender and can be spoofed by malicious "
+        "contracts in a call chain \u2014 use ``msg.sender`` instead."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.ACCESS_CONTROL
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line)
+                if _TX_ORIGIN_AUTH_RE.search(code):
+                    abs_line = func.end_line - len(func.body_lines) + 1 + i
+                    results.append(
+                        self._make_result(
+                            title=f"tx.origin used for auth in {func.name}()",
+                            description=(
+                                f"``{func.name}()`` uses ``tx.origin`` for access "
+                                f"control. A malicious contract can spoof "
+                                f"``tx.origin`` in a delegated call chain. "
+                                f"Use ``msg.sender`` instead."
+                            ),
+                            confidence=Confidence.HIGH,
+                            line_number=abs_line,
+                            source_snippet=line.strip(),
+                            fix_suggestion=(
+                                "Replace ``tx.origin`` with ``msg.sender`` in "
+                                "all access-control assertions."
+                            ),
+                        )
+                    )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 14. Missing zero-address check when setting address state variables
+# ---------------------------------------------------------------------------
+
+
+_ADDR_STATE_WRITE_RE = re.compile(r"\bself\.(\w+)\s*(?:\[.*?\])*\s*=(?!=)\s*(?!empty)\s*(\w+)")
+_ZERO_ADDR_CHECK_RE = re.compile(
+    r"\bassert\b.*\b(?!empty)\w+\s*!=\s*empty\s*\(\s*address\s*\)"
+    r"|\bassert\b.*empty\s*\(\s*address\s*\)\s*!=\s*\w+"
+    r"|\bassert\b.*\w+\s*!=\s*convert\s*\(\s*0"
+    r"|\bassert\b.*\w+\s*!=\s*ZERO_ADDRESS",
+)
+
+
+class MissingZeroAddressCheckDetector(BaseDetector):
+    NAME = "missing_zero_address_check"
+    DESCRIPTION = (
+        "Detect assignment to address-typed state variables without a preceding "
+        "zero-address assertion. Setting an address to ``empty(address)`` can "
+        "permanently disable critical contract functionality."
+    )
+    SEVERITY = Severity.MEDIUM
+    VULNERABILITY_TYPE = VulnerabilityType.INPUT_VALIDATION
+
+    def _address_state_vars(self, contract: ContractInfo) -> set[str]:
+        return {v.name for v in contract.state_variables if "address" in v.type_annotation.lower()}
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        addr_vars = self._address_state_vars(contract)
+        if not addr_vars:
+            return []
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            if func.name in _CONSTRUCTOR_NAMES or "deploy" in func.decorators:
+                continue
+            body = func.body_text
+            for m in _ADDR_STATE_WRITE_RE.finditer(body):
+                var_name = m.group(1)
+                rhs = m.group(2)
+                if var_name not in addr_vars:
+                    continue
+                preceding = body[: m.start()]
+                check_re = re.compile(
+                    rf"\bassert\b[^\n]*\b{re.escape(rhs)}\b[^\n]*!="
+                    rf"|\bassert\b[^\n]*!=\s*{re.escape(rhs)}\b"
+                    rf"|\bassert\b[^\n]*{re.escape(rhs)}\s*!=\s*empty"
+                    rf"|\bassert\b[^\n]*empty[^\n]*!=\s*{re.escape(rhs)}"
+                )
+                if check_re.search(preceding) or _ZERO_ADDR_CHECK_RE.search(preceding):
+                    continue
+                line_in_body = body[: m.start()].count("\n")
+                abs_line = func.end_line - len(func.body_lines) + 1 + line_in_body
+                results.append(
+                    self._make_result(
+                        title=f"Missing zero-address check for self.{var_name} in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` sets ``self.{var_name}`` (an address) "
+                            f"from ``{rhs}`` without verifying it is non-zero. "
+                            f"Setting it to ``empty(address)`` can permanently lose "
+                            f"critical functionality (ownership, fee recipient, etc.)."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=m.group(0),
+                        fix_suggestion=(
+                            f"Add ``assert {rhs} != empty(address)`` before "
+                            f"assigning to ``self.{var_name}``."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 15. Weak randomness (block properties used as random seed)
+# ---------------------------------------------------------------------------
+
+
+_WEAK_RAND_RE = re.compile(
+    r"\b(block\.prevhash|block\.difficulty|block\.coinbase|blockhash\s*\(|block\.number\b)"
+)
+_RANDOM_CONTEXT_RE = re.compile(
+    r"\b(random|rand|seed|nonce|lottery|winner|shuffle|roll|dice|flip)",
+    re.IGNORECASE,
+)
+
+
+class WeakRandomnessDetector(BaseDetector):
+    NAME = "weak_randomness"
+    DESCRIPTION = (
+        "Detect use of predictable block properties (block.prevhash, "
+        "block.difficulty, blockhash) as a source of randomness. Miners "
+        "can manipulate these values within a window."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line)
+                m = _WEAK_RAND_RE.search(code)
+                if not m:
+                    continue
+                ctx_lines = func.body_lines[max(0, i - 2) : i + 3]
+                ctx = "\n".join(ctx_lines)
+                if not _RANDOM_CONTEXT_RE.search(ctx) and "=" not in code:
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Weak randomness source in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` uses ``{m.group(1)}`` as a source of "
+                            f"randomness. Block properties are predictable and can be "
+                            f"manipulated by validators/miners. Use a VRF oracle or "
+                            f"commit-reveal scheme instead."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=line.strip(),
+                        fix_suggestion=(
+                            "Use a VRF oracle (e.g. Chainlink VRF) or a "
+                            "commit-reveal scheme for fair randomness."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 16. Locked Ether (payable but no withdrawal mechanism)
+# ---------------------------------------------------------------------------
+
+
+_WITHDRAW_RE = re.compile(
+    r"\b(send|raw_call)\s*\("
+    r"|\bself\.balance\b",
+)
+
+
+class LockedEtherDetector(BaseDetector):
+    NAME = "locked_ether"
+    DESCRIPTION = (
+        "Detect contracts that can receive Ether (have a ``@payable`` function) "
+        "but have no mechanism to withdraw it \u2014 the Ether would be locked forever."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        has_payable = any(f.is_payable for f in contract.functions)
+        if not has_payable:
+            return []
+        has_withdraw = any(_WITHDRAW_RE.search(f.body_text) for f in contract.functions)
+        if has_withdraw:
+            return []
+        payable_funcs = [f for f in contract.functions if f.is_payable]
+        first = payable_funcs[0]
+        return [
+            self._make_result(
+                title="Ether can be locked (no withdrawal function)",
+                description=(
+                    f"Contract has ``@payable`` function(s) (e.g. ``{first.name}()``) "
+                    f"but no function calls ``send()`` or ``raw_call()`` to withdraw "
+                    f"Ether. Any Ether sent to this contract will be permanently locked."
+                ),
+                confidence=Confidence.MEDIUM,
+                line_number=first.start_line,
+                fix_suggestion=(
+                    "Add a ``withdraw()`` function that calls "
+                    "``send(owner, self.balance)`` to allow recovery of Ether."
+                ),
+            )
+        ]
+
+
+# ---------------------------------------------------------------------------
+# 17. Shadowed state variable (local var has same name as state var)
+# ---------------------------------------------------------------------------
+
+
+_LOCAL_VAR_ASSIGN_RE = re.compile(r"^\s*(\w+)\s*(?::\s*[^=]+)?=(?!=)")
+
+
+class ShadowedStateVariableDetector(BaseDetector):
+    NAME = "shadowed_state_variable"
+    DESCRIPTION = (
+        "Detect local variables that share a name with a contract-level state "
+        "variable. This can cause confusion and logic errors where the developer "
+        "expects to read/write state but operates on the local copy."
+    )
+    SEVERITY = Severity.MEDIUM
+    VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        state_names = {v.name for v in contract.state_variables}
+        if not state_names:
+            return []
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            param_names: set[str] = set()
+            if func.args:
+                for param in func.args.split(","):
+                    p = param.strip().split(":")[0].strip()
+                    if p:
+                        param_names.add(p)
+            seen_in_func: set[str] = set()
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line)
+                m = _LOCAL_VAR_ASSIGN_RE.match(code)
+                if not m:
+                    continue
+                var = m.group(1)
+                if var in param_names or var.startswith("self"):
+                    continue
+                if var in state_names and var not in seen_in_func:
+                    seen_in_func.add(var)
+                    abs_line = func.end_line - len(func.body_lines) + 1 + i
+                    results.append(
+                        self._make_result(
+                            title=f"Local variable '{var}' shadows state variable in {func.name}()",
+                            description=(
+                                f"``{func.name}()`` declares a local variable "
+                                f"``{var}`` that shadows the state variable "
+                                f"``self.{var}``. Reads and writes to ``{var}`` "
+                                f"inside the function affect only the local copy."
+                            ),
+                            confidence=Confidence.MEDIUM,
+                            line_number=abs_line,
+                            source_snippet=line.strip(),
+                            fix_suggestion=(
+                                f"Rename the local variable to avoid shadowing "
+                                f"the state variable ``self.{var}``."
+                            ),
+                        )
+                    )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 18. Missing input validation (amount/value params with no assert)
+# ---------------------------------------------------------------------------
+
+
+_AMOUNT_PARAM_RE = re.compile(
+    r"\b(amount|value|shares|tokens|qty|quantity)\b",
+    re.IGNORECASE,
+)
+_ASSERT_RE = re.compile(r"\bassert\b")
+
+
+class MissingInputValidationDetector(BaseDetector):
+    NAME = "missing_input_validation"
+    DESCRIPTION = (
+        "Detect ``@external`` functions that accept amount/value parameters "
+        "but have no ``assert`` statement to validate inputs."
+    )
+    SEVERITY = Severity.MEDIUM
+    VULNERABILITY_TYPE = VulnerabilityType.INPUT_VALIDATION
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            if not func.is_external and "deploy" not in func.decorators:
+                continue
+            if func.is_view or func.is_pure:
+                continue
+            if not func.args:
+                continue
+            amount_params = [
+                p.strip().split(":")[0].strip()
+                for p in func.args.split(",")
+                if _AMOUNT_PARAM_RE.search(p)
+            ]
+            if not amount_params:
+                continue
+            body = func.body_text
+            has_validation = any(
+                re.search(rf"\bassert\b[^\n]*\b{re.escape(p)}\b", body) for p in amount_params
+            )
+            if has_validation:
+                continue
+            first_5 = "\n".join(func.body_lines[:5])
+            if _ASSERT_RE.search(first_5):
+                continue
+            results.append(
+                self._make_result(
+                    title=f"No input validation in {func.name}()",
+                    description=(
+                        f"``{func.name}()`` accepts ``{', '.join(amount_params)}`` "
+                        f"parameter(s) but has no ``assert`` to validate the input. "
+                        f"A zero or extreme value can cause unexpected behavior."
+                    ),
+                    confidence=Confidence.LOW,
+                    line_number=func.start_line,
+                    fix_suggestion=(
+                        f"Add ``assert {amount_params[0]} > 0`` at the start of ``{func.name}()``."
+                    ),
+                )
+            )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 19. Unsafe assembly / inline asm
+# ---------------------------------------------------------------------------
+
+
+_ASM_RE = re.compile(r"\b__asm__\b|\basm\s*\{|\basm\s*:")
+
+
+class UnsafeAssemblyDetector(BaseDetector):
+    NAME = "unsafe_assembly"
+    DESCRIPTION = (
+        "Detect inline assembly blocks. Vyper deliberately limits assembly access; "
+        "if used, it bypasses safety guarantees and requires careful manual review."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line)
+                if _ASM_RE.search(code):
+                    abs_line = func.end_line - len(func.body_lines) + 1 + i
+                    results.append(
+                        self._make_result(
+                            title=f"Inline assembly in {func.name}()",
+                            description=(
+                                f"``{func.name}()`` uses inline assembly which "
+                                f"bypasses Vyper's safety guarantees. Requires "
+                                f"careful manual review."
+                            ),
+                            confidence=Confidence.HIGH,
+                            line_number=abs_line,
+                            source_snippet=line.strip(),
+                            fix_suggestion=(
+                                "Avoid inline assembly wherever possible. If it cannot "
+                                "be avoided, add extensive comments and unit tests."
+                            ),
+                        )
+                    )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 20. Missing return value check on external interface calls
+# ---------------------------------------------------------------------------
+
+
+_IFACE_CALL_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]*\s*\([^()\n]*\)\s*\.\s*[a-z_]\w*\s*\([^)\n]*\)")
+
+
+class MissingReturnValueDetector(BaseDetector):
+    NAME = "missing_return_value"
+    DESCRIPTION = (
+        "Detect interface calls whose return value is not captured or checked. "
+        "If the called function signals failure via its return value, ignoring "
+        "it can leave the contract in an inconsistent state."
+    )
+    SEVERITY = Severity.MEDIUM
+    VULNERABILITY_TYPE = VulnerabilityType.EXTERNAL_CALL
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                if not _IFACE_CALL_RE.search(code):
+                    continue
+                if re.match(r"^\w+\s*(?::\s*[^=]+)?\s*=", code):
+                    continue
+                if code.startswith("assert") or code.startswith("log "):
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Unchecked return value from interface call in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` makes an external interface call "
+                            f"whose return value is discarded."
+                        ),
+                        confidence=Confidence.LOW,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion=(
+                            "Capture the return value and assert it, e.g.: "
+                            "``success: bool = IERC20(token).transfer(...)`` "
+                            "followed by ``assert success``."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 21. Division before multiplication (precision loss)
+# ---------------------------------------------------------------------------
+
+
+_DIV_MUL_RE = re.compile(r"\(\s*[^()+\-*/\n]+\s*/\s*[^()+\-*/\n]+\s*\)\s*\*")
+
+
+class DivisionBeforeMultiplicationDetector(BaseDetector):
+    NAME = "division_before_multiplication"
+    DESCRIPTION = (
+        "Detect the pattern ``(a / b) * c`` where integer division truncates "
+        "before multiplication. This loses precision compared to ``(a * c) / b``."
+    )
+    SEVERITY = Severity.MEDIUM
+    VULNERABILITY_TYPE = VulnerabilityType.ARITHMETIC
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                if not _DIV_MUL_RE.search(code):
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Division before multiplication in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` uses the pattern ``(a / b) * c``. "
+                            f"Integer division truncates before the multiplication, "
+                            f"causing precision loss. Reorder to ``(a * c) / b``."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion="Reorder to ``(a * c) / b`` to reduce precision loss.",
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 22. Incorrect ERC20 return value (transfer/transferFrom not checked)
+# ---------------------------------------------------------------------------
+
+
+_ERC20_TRANSFER_RE = re.compile(
+    r"\b[A-Za-z_]\w*\s*\([^()\n]*\)\s*\.\s*(transfer|transferFrom)\s*\("
+)
+_TRANSFER_ASSERT_RE = re.compile(
+    r"\bassert\b.*\.\s*(transfer|transferFrom)\s*\("
+    r"|\w+\s*(?::\s*bool\s*)?=\s*.*\.\s*(transfer|transferFrom)\s*\("
+)
+
+
+class IncorrectERC20ReturnDetector(BaseDetector):
+    NAME = "incorrect_erc20_return"
+    DESCRIPTION = (
+        "Detect calls to ERC-20 ``transfer()`` or ``transferFrom()`` whose "
+        "boolean return value is not asserted. Non-reverting ERC-20 tokens "
+        "silently return ``False`` on failure."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.EXTERNAL_CALL
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                if not _ERC20_TRANSFER_RE.search(code):
+                    continue
+                if _TRANSFER_ASSERT_RE.search(code):
+                    continue
+                if re.match(r"^\w+\s*(?::\s*bool\s*)?=", code):
+                    continue
+                if code.startswith("assert"):
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                m = _ERC20_TRANSFER_RE.search(code)
+                method = m.group(1) if m else "transfer"
+                results.append(
+                    self._make_result(
+                        title=f"Unchecked ERC-20 {method}() in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` calls ``.{method}()`` but does not "
+                            f"check the boolean return value. Some ERC-20 tokens "
+                            f"(e.g. USDT) return ``False`` instead of reverting on "
+                            f"failure."
+                        ),
+                        confidence=Confidence.HIGH,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion=(
+                            f"Use ``assert IERC20(token).{method}(...)`` or "
+                            f"capture and check: ``ok: bool = IERC20(token).{method}(...); assert ok``."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
 # Detector registry
 # ---------------------------------------------------------------------------
 
 ALL_DETECTORS: list[type[BaseDetector]] = [
+    # Original 12
     MissingNonreentrantDetector,
     UnsafeRawCallDetector,
     UncheckedSendDetector,
@@ -1219,6 +1833,17 @@ ALL_DETECTORS: list[type[BaseDetector]] = [
     SendInLoopDetector,
     UncheckedSubtractionDetector,
     CEIViolationDetector,
+    # v0.5.0 new detectors
+    TxOriginAuthDetector,
+    MissingZeroAddressCheckDetector,
+    WeakRandomnessDetector,
+    LockedEtherDetector,
+    ShadowedStateVariableDetector,
+    MissingInputValidationDetector,
+    UnsafeAssemblyDetector,
+    MissingReturnValueDetector,
+    DivisionBeforeMultiplicationDetector,
+    IncorrectERC20ReturnDetector,
 ]
 
 DETECTOR_MAP: dict[str, type[BaseDetector]] = {cls.NAME: cls for cls in ALL_DETECTORS}

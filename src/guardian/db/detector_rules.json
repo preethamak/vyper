@@ -90,6 +90,76 @@
       "severity": "HIGH/INFO",
       "enabled_by_default": true,
       "description": "Always-on pragma/version vulnerability checks for known Vyper compiler advisories."
+    },
+    {
+      "name": "tx_origin_auth",
+      "category": "access_control",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Detects use of tx.origin for authentication; use msg.sender for access control."
+    },
+    {
+      "name": "missing_zero_address_check",
+      "category": "input_validation",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Detects assignment to address state variables without a preceding non-zero address assertion."
+    },
+    {
+      "name": "weak_randomness",
+      "category": "code_quality",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Detects predictable block properties used as randomness sources."
+    },
+    {
+      "name": "locked_ether",
+      "category": "code_quality",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Detects payable contracts with no send/raw_call withdrawal mechanism."
+    },
+    {
+      "name": "shadowed_state_variable",
+      "category": "code_quality",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Detects local variables that shadow contract-level state variables."
+    },
+    {
+      "name": "missing_input_validation",
+      "category": "input_validation",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Detects external amount/value entry points without explicit assert-based input validation."
+    },
+    {
+      "name": "unsafe_assembly",
+      "category": "code_quality",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Detects inline assembly signals that bypass Vyper safety guarantees."
+    },
+    {
+      "name": "missing_return_value",
+      "category": "external_call",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Detects external interface calls whose return value is discarded."
+    },
+    {
+      "name": "division_before_multiplication",
+      "category": "arithmetic",
+      "severity": "MEDIUM",
+      "enabled_by_default": true,
+      "description": "Detects precision-loss patterns where integer division happens before multiplication."
+    },
+    {
+      "name": "incorrect_erc20_return",
+      "category": "external_call",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Detects ERC-20 transfer/transferFrom calls whose boolean return value is not asserted."
     }
   ]
 }

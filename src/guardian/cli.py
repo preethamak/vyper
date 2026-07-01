@@ -500,9 +500,13 @@ def _resolve_analysis_config(
         raise typer.Exit(code=2) from None
 
     resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
+    if resolved_semantic_mode == "auto":
+        import shutil as _shutil
+
+        resolved_semantic_mode = "compiler" if _shutil.which("vyper") is not None else "source"
     if resolved_semantic_mode not in {"source", "compiler"}:
         console.print(
-            f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
+            f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use auto, source, or compiler.[/{ERR}]"
         )
         raise typer.Exit(code=2)
 
@@ -1102,7 +1106,7 @@ def analyze(
     semantic_mode: str | None = typer.Option(
         None,
         "--semantic-mode",
-        help="Semantic mode: source | compiler (default from config if set).",
+        help="Semantic mode: auto | source | compiler (default: auto). auto uses compiler if vyper is installed, else source.",
     ),
     project_graph: bool | None = typer.Option(
         None,
@@ -1148,34 +1152,38 @@ def analyze(
     ),
     ai_triage: bool | None = typer.Option(
         None,
+        "--priority-triage/--no-priority-triage",
         "--ai-triage/--no-ai-triage",
-        help="Enable/disable optional AI-assisted triage metadata (post-processor; does not alter findings).",
+        help="Enable/disable optional Priority Triage (Deterministic) metadata (post-processor; does not alter findings).",
     ),
     ai: bool = typer.Option(
         False,
         "--ai",
-        help="Enable AI-assisted audit orchestration (preferred alias for AI triage mode).",
+        help="Enable LLM-assisted audit orchestration (preferred alias for LLM triage mode).",
     ),
     ai_triage_min_severity: str | None = typer.Option(
         None,
+        "--priority-triage-min-severity",
         "--ai-triage-min-severity",
         help="Minimum severity to include in triage: CRITICAL, HIGH, MEDIUM, LOW, INFO (default from config if set).",
     ),
     ai_triage_max_items: int | None = typer.Option(
         None,
+        "--priority-triage-max-items",
         "--ai-triage-max-items",
         min=1,
         help="Maximum number of triage items to emit (default from config if set).",
     ),
     ai_triage_mode: str | None = typer.Option(
         None,
+        "--priority-triage-mode",
         "--ai-triage-mode",
-        help="AI triage mode: deterministic | llm (default from config if set).",
+        help="Priority triage mode: deterministic | llm (default from config if set).",
     ),
     ai_llm_model: str | None = typer.Option(
         None,
         "--ai-llm-model",
-        help="Override LLM model for --ai-triage-mode llm.",
+        help="Override LLM model for --priority-triage-mode llm.",
     ),
     ai_allow_fallback: bool = typer.Option(
         False,
@@ -1237,7 +1245,7 @@ def analyze(
         )
         if triage_enabled:
             console.print(
-                f"[{WARN}]AI triage is currently skipped in directory mode.[/{WARN}] "
+                f"[{WARN}]Priority triage is currently skipped in directory mode.[/{WARN}] "
                 "Run per-file analysis to include triage metadata."
             )
 
@@ -2370,11 +2378,17 @@ def scan(
     fix_dry_run: bool = typer.Option(False, "--fix-dry-run"),
     fix_report: Path | None = typer.Option(None, "--fix-report"),
     max_auto_fix_tier: str | None = typer.Option(None, "--max-auto-fix-tier"),
-    ai_triage: bool | None = typer.Option(None, "--ai-triage/--no-ai-triage"),
+    ai_triage: bool | None = typer.Option(
+        None, "--priority-triage/--no-priority-triage", "--ai-triage/--no-ai-triage"
+    ),
     ai: bool = typer.Option(False, "--ai"),
-    ai_triage_min_severity: str | None = typer.Option(None, "--ai-triage-min-severity"),
-    ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
-    ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
+    ai_triage_min_severity: str | None = typer.Option(
+        None, "--priority-triage-min-severity", "--ai-triage-min-severity"
+    ),
+    ai_triage_max_items: int | None = typer.Option(
+        None, "--priority-triage-max-items", "--ai-triage-max-items", min=1
+    ),
+    ai_triage_mode: str | None = typer.Option(None, "--priority-triage-mode", "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
     ai_allow_fallback: bool = typer.Option(False, "--allow-ai-fallback"),
 ) -> None:
@@ -2462,7 +2476,7 @@ def verify(
     semantic_mode: str | None = typer.Option(
         None,
         "--semantic-mode",
-        help="Semantic mode: source | compiler (default from config if set).",
+        help="Semantic mode: auto | source | compiler (default from config if set).",
     ),
     project_graph: bool | None = typer.Option(
         None,
@@ -2488,34 +2502,38 @@ def verify(
     ),
     ai_triage: bool | None = typer.Option(
         None,
+        "--priority-triage/--no-priority-triage",
         "--ai-triage/--no-ai-triage",
-        help="Enable/disable optional AI-assisted triage metadata (post-processor; does not alter findings).",
+        help="Enable/disable optional Priority Triage metadata (post-processor; does not alter findings).",
     ),
     ai: bool = typer.Option(
         False,
         "--ai",
-        help="Enable AI-assisted audit orchestration (preferred alias for AI triage mode).",
+        help="Enable LLM-assisted audit orchestration (preferred alias for LLM triage mode).",
     ),
     ai_triage_min_severity: str | None = typer.Option(
         None,
+        "--priority-triage-min-severity",
         "--ai-triage-min-severity",
         help="Minimum severity to include in triage: CRITICAL, HIGH, MEDIUM, LOW, INFO (default from config if set).",
     ),
     ai_triage_max_items: int | None = typer.Option(
         None,
+        "--priority-triage-max-items",
         "--ai-triage-max-items",
         min=1,
         help="Maximum number of triage items to emit (default from config if set).",
     ),
     ai_triage_mode: str | None = typer.Option(
         None,
+        "--priority-triage-mode",
         "--ai-triage-mode",
-        help="AI triage mode: deterministic | llm (default from config if set).",
+        help="Priority triage mode: deterministic | llm (default from config if set).",
     ),
     ai_llm_model: str | None = typer.Option(
         None,
         "--ai-llm-model",
-        help="Override LLM model for --ai-triage-mode llm.",
+        help="Override LLM model for --priority-triage-mode llm.",
     ),
     ai_allow_fallback: bool = typer.Option(
         False,
@@ -2923,7 +2941,7 @@ def flow_view(
     semantic_mode: str | None = typer.Option(
         None,
         "--semantic-mode",
-        help="Semantic mode: source | compiler (default from config if set).",
+        help="Semantic mode: auto | source | compiler (default from config if set).",
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write output artifact to file."
@@ -2940,7 +2958,7 @@ def flow_view(
     contract = parse_vyper_source(source, str(file_path))
     cfg = load_config(None)
     resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
-    if resolved_semantic_mode not in {"source", "compiler"}:
+    if resolved_semantic_mode not in {"source", "compiler", "auto"}:
         console.print(
             f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
         )
@@ -3035,7 +3053,7 @@ def fix_cmd(
         ..., exists=True, readable=True, help="Path to the .vy contract."
     ),
     ai: bool = typer.Option(
-        False, "--ai", help="Enable AI-assisted audit orchestration before remediation."
+        False, "--ai", help="Enable LLM-assisted audit orchestration before remediation."
     ),
     format: str | None = typer.Option(None, "--format", "-f"),
     output: Path | None = typer.Option(None, "--output", "-o"),
@@ -3044,17 +3062,23 @@ def fix_cmd(
     semantic_mode: str | None = typer.Option(
         None,
         "--semantic-mode",
-        help="Semantic mode: source | compiler (default from config if set).",
+        help="Semantic mode: auto | source | compiler (default from config if set).",
     ),
     config: Path | None = typer.Option(None, "--config", "-c"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     fix_dry_run: bool = typer.Option(False, "--fix-dry-run"),
     fix_report: Path | None = typer.Option(None, "--fix-report"),
     max_auto_fix_tier: str | None = typer.Option(None, "--max-auto-fix-tier"),
-    ai_triage: bool | None = typer.Option(None, "--ai-triage/--no-ai-triage"),
-    ai_triage_min_severity: str | None = typer.Option(None, "--ai-triage-min-severity"),
-    ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
-    ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
+    ai_triage: bool | None = typer.Option(
+        None, "--priority-triage/--no-priority-triage", "--ai-triage/--no-ai-triage"
+    ),
+    ai_triage_min_severity: str | None = typer.Option(
+        None, "--priority-triage-min-severity", "--ai-triage-min-severity"
+    ),
+    ai_triage_max_items: int | None = typer.Option(
+        None, "--priority-triage-max-items", "--ai-triage-max-items", min=1
+    ),
+    ai_triage_mode: str | None = typer.Option(None, "--priority-triage-mode", "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
     ai_allow_fallback: bool = typer.Option(
         False,
@@ -3117,19 +3141,25 @@ def analyze_address(
     semantic_mode: str | None = typer.Option(
         None,
         "--semantic-mode",
-        help="Semantic mode: source | compiler (default from config if set).",
+        help="Semantic mode: auto | source | compiler (default from config if set).",
     ),
     ci: bool = typer.Option(False, "--ci"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     ai: bool = typer.Option(
         False,
         "--ai",
-        help="Enable AI-assisted audit orchestration (preferred alias for AI triage mode).",
+        help="Enable LLM-assisted audit orchestration (preferred alias for LLM triage mode).",
     ),
-    ai_triage: bool | None = typer.Option(None, "--ai-triage/--no-ai-triage"),
-    ai_triage_min_severity: str | None = typer.Option(None, "--ai-triage-min-severity"),
-    ai_triage_max_items: int | None = typer.Option(None, "--ai-triage-max-items", min=1),
-    ai_triage_mode: str | None = typer.Option(None, "--ai-triage-mode"),
+    ai_triage: bool | None = typer.Option(
+        None, "--priority-triage/--no-priority-triage", "--ai-triage/--no-ai-triage"
+    ),
+    ai_triage_min_severity: str | None = typer.Option(
+        None, "--priority-triage-min-severity", "--ai-triage-min-severity"
+    ),
+    ai_triage_max_items: int | None = typer.Option(
+        None, "--priority-triage-max-items", "--ai-triage-max-items", min=1
+    ),
+    ai_triage_mode: str | None = typer.Option(None, "--priority-triage-mode", "--ai-triage-mode"),
     ai_llm_model: str | None = typer.Option(None, "--ai-llm-model"),
     ai_allow_fallback: bool = typer.Option(
         False,
@@ -3230,7 +3260,7 @@ def analyze_address(
         raise typer.Exit(code=2) from None
 
     resolved_semantic_mode = (semantic_mode or cfg.analysis.semantic_mode).strip().lower()
-    if resolved_semantic_mode not in {"source", "compiler"}:
+    if resolved_semantic_mode not in {"source", "compiler", "auto"}:
         console.print(
             f"[{ERR}]Invalid semantic mode: {resolved_semantic_mode}. Use source or compiler.[/{ERR}]"
         )
@@ -4512,8 +4542,10 @@ def _print_analysis_footer(report: AnalysisReport) -> None:
 
 
 def _print_ai_triage_section(report: AnalysisReport) -> None:
-    """Render optional AI-assisted triage metadata."""
-    console.print(Rule("[bold]🤖 AI-Assisted Triage[/bold]", style=ACCENT))
+    """Render optional Priority Triage (Deterministic) metadata."""
+    console.print(
+        Rule("[bold]Priority Triage[/bold] [dim](AI-Assisted Triage)[/dim]", style=ACCENT)
+    )
     console.print()
 
     policy_version = report.ai_triage_policy.get("policy_version", "unknown")
@@ -4537,7 +4569,7 @@ def _print_ai_triage_section(report: AnalysisReport) -> None:
             console.print(f"[{WARN}]Policy warning:[/{WARN}] {w}")
     console.print()
 
-    console.print("[bold]LLM Summary[/bold]")
+    console.print("[bold]Triage Summary[/bold]")
     top_items = sorted(
         report.ai_triage,
         key=lambda item: int(item.get("priority_rank", 9999) or 9999),
@@ -5858,6 +5890,7 @@ def stats(
 ) -> None:
     """Show contract statistics, structure & complexity overview."""
     from guardian.analyzer.ast_parser import parse_vyper_source
+    from guardian.analyzer.metrics import compute_contract_complexity
     from guardian.analyzer.semantic import build_semantic_summary
     from guardian.utils.helpers import load_vyper_source as _load
 
@@ -5867,6 +5900,7 @@ def stats(
     try:
         source = _load(file_path)
         contract = parse_vyper_source(source, str(file_path))
+        complexity_report = compute_contract_complexity(contract)
     except GuardianError as exc:
         console.print(
             Panel(
@@ -6004,6 +6038,7 @@ def stats(
         "call_activity": call_activity,
         "call_edges": call_edges,
         "functions_detailed": functions_detailed,
+        "complexity_metrics": complexity_report.as_dict(),
     }
 
     # ── Overview table ──
@@ -6119,6 +6154,7 @@ def stats(
         func_table.add_column("Visibility", width=12, justify="center")
         func_table.add_column("Decorators", ratio=1)
         func_table.add_column("Lines", width=10, justify="right")
+        func_table.add_column("Complexity", width=12, justify="center")
 
         for func in sorted(contract.functions, key=lambda f: f.start_line):
             vis = ""
@@ -6142,12 +6178,62 @@ def stats(
 
             dec_str = " ".join(decs) if decs else "[dim]—[/dim]"
             line_range = f"{func.start_line}-{func.end_line}"
-            func_table.add_row(func.name, vis, dec_str, line_range)
+            # Add cyclomatic complexity
+            fc = next((f for f in complexity_report.functions if f.func_name == func.name), None)
+            if fc:
+                risk_color = {
+                    "LOW": "green",
+                    "MEDIUM": "yellow",
+                    "HIGH": "red",
+                    "CRITICAL": "bold red",
+                }.get(fc.risk_level, "white")
+                complexity_str = f"[{risk_color}]{fc.complexity} ({fc.risk_level})[/{risk_color}]"
+            else:
+                complexity_str = "[dim]?[/dim]"
+            func_table.add_row(func.name, vis, dec_str, line_range, complexity_str)
 
         console.print(func_table)
         console.print()
 
-    # ── State variables ──
+        # ── Cyclomatic complexity section ──
+        console.print(Rule("[bold]🧮 Cyclomatic Complexity[/bold]", style=ACCENT))
+        console.print()
+        cx_table = Table(
+            box=box.SIMPLE_HEAVY,
+            show_header=True,
+            header_style="bold",
+            padding=(0, 1),
+            expand=True,
+        )
+        cx_table.add_column("Function", style="bold white", min_width=20)
+        cx_table.add_column("M", width=6, justify="right")
+        cx_table.add_column("Risk", width=12, justify="center")
+        cx_table.add_column("Lines", width=14, justify="right")
+        for fc in sorted(complexity_report.functions, key=lambda x: -x.complexity):
+            risk_color = {
+                "LOW": "green",
+                "MEDIUM": "yellow",
+                "HIGH": "red",
+                "CRITICAL": "bold red",
+            }.get(fc.risk_level, "white")
+            cx_table.add_row(
+                fc.func_name,
+                str(fc.complexity),
+                f"[{risk_color}]{fc.risk_level}[/{risk_color}]",
+                f"{fc.start_line}-{fc.end_line}",
+            )
+        console.print(cx_table)
+        if complexity_report.high_complexity_functions:
+            console.print(
+                f"  [{WARN}]⚠  {len(complexity_report.high_complexity_functions)} function(s) "
+                f"with complexity >10 — consider refactoring.[/{WARN}]"
+            )
+        console.print(
+            f"  Max M: [bold]{complexity_report.max_complexity}[/bold]  "
+            f"Avg M: [bold]{complexity_report.mean_complexity:.1f}[/bold]"
+        )
+        console.print()
+
     if contract.state_variables:
         console.print(Rule("[bold]📊 State Variables[/bold]", style=ACCENT))
         console.print()
@@ -6370,8 +6456,8 @@ analysis:
   disabled_detectors: []
   # Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO
     severity_threshold: LOW
-    # Semantic mode: source (fast, default) | compiler (optional, deeper)
-    semantic_mode: source
+    # Semantic mode: auto (compiler when available) | source | compiler
+    semantic_mode: auto
     # Project graph (directory scans only)
     project_graph: false
 

@@ -10,7 +10,9 @@ Builds a lightweight semantic summary from parsed Vyper contracts:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from guardian.models import ContractInfo, FunctionInfo
 from guardian.utils.helpers import check_vyper_available
@@ -121,7 +123,7 @@ def build_semantic_summary(contract: ContractInfo, mode: str | None = None) -> S
 
     Args:
         contract: Parsed contract info.
-        mode: Optional semantic mode override (source | compiler).
+        mode: Optional semantic mode override (auto | source | compiler).
     """
     resolved = (mode or contract.semantic_mode or "source").strip().lower()
     if resolved == "compiler":
@@ -178,13 +180,20 @@ def _parse_vyper_ast(source: str):
         log.warning("Unable to import vyper AST parser: %s", exc)
         return None
 
-    parse_fn = getattr(vy_ast, "parse_to_ast", None)
-    if parse_fn is None:
+    parse_fn_obj = getattr(vy_ast, "parse_to_ast", None)
+    if parse_fn_obj is None:
         try:
-            from vyper.ast import parse_to_ast as parse_fn  # type: ignore[import-untyped]
+            from vyper.ast import parse_to_ast as imported_parse_fn  # type: ignore[import-untyped]
         except Exception as exc:  # pragma: no cover - import guard
             log.warning("Vyper parse_to_ast unavailable: %s", exc)
             return None
+        parse_fn_obj = imported_parse_fn
+
+    if not callable(parse_fn_obj):
+        log.warning("Vyper parse_to_ast is not callable; falling back")
+        return None
+
+    parse_fn: Callable[..., Any] = parse_fn_obj
 
     try:
         return parse_fn(source)

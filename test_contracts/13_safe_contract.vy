@@ -35,14 +35,16 @@ def deposit():
 @nonreentrant
 def withdraw(amount: uint256):
     assert self.balances[msg.sender] >= amount, "Insufficient balance"
+    assert self.total_deposits >= amount, "Invalid accounting"
     self.balances[msg.sender] -= amount
     self.total_deposits -= amount
-    send(msg.sender, amount)
+    assert send(msg.sender, amount)
     log Withdrawal(msg.sender, amount)
 
 @external
 def transfer_ownership(new_owner: address):
     assert msg.sender == self.owner, "Not owner"
+    assert new_owner != empty(address), "Invalid owner"
     old: address = self.owner
     self.owner = new_owner
     log OwnershipTransferred(old, new_owner)

@@ -84,7 +84,7 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
 
         for module in import_modules:
             resolved = module_map.get(module)
-            edge = {
+            edge: dict[str, object] = {
                 "from": str(contract.file_path),
                 "to": resolved,
                 "import": module,
@@ -110,7 +110,7 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
 
         uses = _extract_interface_uses(contract)
         for use in uses:
-            iface = use["name"]
+            iface = str(use["name"])
             defined = interface_defs.get(iface)
             status = "resolved"
             missing_functions: list[str] = []
@@ -147,8 +147,8 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
                             "Contract declares an interface in implements/uses but no matching "
                             "interface definition exists in the project graph."
                         ),
-                        line_number=use.get("line"),
-                        source_snippet=use.get("line_text"),
+                        line_number=_optional_int(use.get("line")),
+                        source_snippet=_optional_str(use.get("line_text")),
                         fix_suggestion=(
                             "Define the interface in the project or update the import to reference "
                             "the correct interface file."
@@ -176,8 +176,8 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
                             "Contract claims to implement an interface but is missing required "
                             f"function(s): {missing_text}."
                         ),
-                        line_number=use.get("line"),
-                        source_snippet=use.get("line_text"),
+                        line_number=_optional_int(use.get("line")),
+                        source_snippet=_optional_str(use.get("line_text")),
                         fix_suggestion=(
                             "Implement the missing interface functions or update the interface "
                             "declaration to match the contract's API."
@@ -320,7 +320,9 @@ def _build_internal_call_graph(contract: ContractInfo) -> list[dict[str, object]
 
 
 def _build_state_map(contract: ContractInfo) -> dict[str, object]:
-    variables = {v.name: {"reads": set(), "writes": set()} for v in contract.state_variables}
+    variables: dict[str, dict[str, set[str]]] = {
+        v.name: {"reads": set(), "writes": set()} for v in contract.state_variables
+    }
     if not variables:
         return {"file": str(contract.file_path), "variables": {}}
 
@@ -341,6 +343,14 @@ def _build_state_map(contract: ContractInfo) -> dict[str, object]:
         if values["reads"] or values["writes"]
     }
     return {"file": str(contract.file_path), "variables": formatted}
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _is_write(name: str, body: str) -> bool:

@@ -8,16 +8,22 @@ from guardian.analyzer.static import StaticAnalyzer
 from guardian.analyzer.vyper_detector import (
     CEIViolationDetector,
     DangerousDelegatecallDetector,
+    IncorrectERC20ReturnDetector,
     IntegerOverflowDetector,
     MissingEventEmissionDetector,
+    MissingInputValidationDetector,
     MissingNonreentrantDetector,
+    MissingZeroAddressCheckDetector,
     SendInLoopDetector,
+    ShadowedStateVariableDetector,
     TimestampDependenceDetector,
+    TxOriginAuthDetector,
     UncheckedSendDetector,
     UncheckedSubtractionDetector,
     UnprotectedSelfdestructDetector,
     UnprotectedStateChangeDetector,
     UnsafeRawCallDetector,
+    WeakRandomnessDetector,
 )
 from guardian.models import Severity
 
@@ -1493,3 +1499,145 @@ user_tokens: HashMap[
         results = check_compiler_version(contract)
         advisory_ids = [r.title for r in results]
         assert any("GHSA-vxmm" in t for t in advisory_ids)
+
+
+class TestV05DetectorSet:
+    def test_tx_origin_auth_flags_assertion(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+def admin():
+    assert tx.origin == self.owner
+"""
+        results = _run_detector(TxOriginAuthDetector, source)
+        assert len(results) == 1
+        assert results[0].detector_name == "tx_origin_auth"
+
+    def test_tx_origin_reference_without_auth_is_not_flagged(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+last_origin: public(address)
+
+@external
+def remember():
+    self.last_origin = tx.origin
+"""
+        results = _run_detector(TxOriginAuthDetector, source)
+        assert len(results) == 0
+
+    def test_missing_zero_address_check_flags_address_assignment(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+def set_owner(new_owner: address):
+    self.owner = new_owner
+"""
+        results = _run_detector(MissingZeroAddressCheckDetector, source)
+        assert len(results) == 1
+        assert results[0].detector_name == "missing_zero_address_check"
+
+    def test_missing_zero_address_check_accepts_assertion(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+def set_owner(new_owner: address):
+    assert new_owner != empty(address)
+    self.owner = new_owner
+"""
+        results = _run_detector(MissingZeroAddressCheckDetector, source)
+        assert len(results) == 0
+
+    def test_weak_randomness_flags_random_seed(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def roll() -> uint256:
+    seed: uint256 = block.number
+    return seed % 6
+"""
+        results = _run_detector(WeakRandomnessDetector, source)
+        assert len(results) == 1
+        assert results[0].detector_name == "weak_randomness"
+
+    def test_shadowed_state_variable_flags_local_shadow(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+balance: public(uint256)
+
+@external
+def update():
+    balance: uint256 = 1
+"""
+        results = _run_detector(ShadowedStateVariableDetector, source)
+        assert len(results) == 1
+
+    def test_missing_input_validation_flags_amount_arg(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+balance: public(uint256)
+
+@external
+def deposit(amount: uint256):
+    self.balance += amount
+"""
+        results = _run_detector(MissingInputValidationDetector, source)
+        assert len(results) == 1
+
+    def test_missing_input_validation_accepts_amount_assert(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+balance: public(uint256)
+
+@external
+def deposit(amount: uint256):
+    assert amount > 0
+    self.balance += amount
+"""
+        results = _run_detector(MissingInputValidationDetector, source)
+        assert len(results) == 0
+
+    def test_incorrect_erc20_return_flags_unchecked_transfer(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IERC20:
+    def transfer(to: address, amount: uint256) -> bool: nonpayable
+
+token: public(address)
+
+@external
+def payout(to: address, amount: uint256):
+    IERC20(self.token).transfer(to, amount)
+"""
+        results = _run_detector(IncorrectERC20ReturnDetector, source)
+        assert len(results) == 1
+
+    def test_incorrect_erc20_return_accepts_asserted_transfer(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IERC20:
+    def transfer(to: address, amount: uint256) -> bool: nonpayable
+
+token: public(address)
+
+@external
+def payout(to: address, amount: uint256):
+    assert IERC20(self.token).transfer(to, amount)
+"""
+        results = _run_detector(IncorrectERC20ReturnDetector, source)
+        assert len(results) == 0

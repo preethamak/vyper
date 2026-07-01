@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+# Max file size can be overridden via GUARD_MAX_FILE_MB env var (default 10 MB)
+MAX_FILE_SIZE_BYTES = int(os.getenv("GUARD_MAX_FILE_MB", "10")) * 1024 * 1024  # bytes
 
 
 class GuardianError(Exception):
@@ -64,7 +66,8 @@ def truncate(text: str, max_len: int = 200) -> str:
     """Return *text* truncated to *max_len* characters with an ellipsis."""
     if len(text) <= max_len:
         return text
-    return text[: max_len - 1] + "…"
+    # Preserve exactly max_len characters (including the ellipsis)
+    return text[: max_len - len("…")] + "…"
 
 
 def check_vyper_available() -> str | None:

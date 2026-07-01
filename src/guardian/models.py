@@ -88,6 +88,13 @@ class DetectorResult(BaseModel):
         default_factory=dict,
         description="Lightweight semantic summary for the enclosing function/context.",
     )
+    exploit_verification: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Structured exploitability evidence and remediation/test plan for findings "
+            "where Vyper Guard can build a deterministic proof path."
+        ),
+    )
 
 
 class FunctionInfo(BaseModel):
@@ -161,8 +168,8 @@ class ContractInfo(BaseModel):
     imports: list[str] = Field(default_factory=list)
     lines: list[str] = Field(default_factory=list, description="All source lines (0-indexed).")
     semantic_mode: str = Field(
-        default="source",
-        description="Semantic engine mode used for analysis: source | compiler.",
+        default="auto",
+        description="Semantic engine mode used for analysis: auto | source | compiler.",
     )
 
 

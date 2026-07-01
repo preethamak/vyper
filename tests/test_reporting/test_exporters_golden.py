@@ -12,6 +12,7 @@ from rich.console import Console
 
 from guardian import __version__
 from guardian.analyzer.ai_triage import apply_ai_triage
+from guardian.analyzer.static import StaticAnalyzer
 from guardian.models import (
     AnalysisReport,
     Confidence,
@@ -179,6 +180,26 @@ def test_json_export_includes_detector_failures_when_present() -> None:
 
     assert payload["failed_detectors"] == ["unsafe_raw_call"]
     assert payload["detector_errors"]["unsafe_raw_call"] == "timeout"
+
+
+def test_static_analysis_json_includes_complexity_context() -> None:
+    source = """\
+# pragma version ^0.4.0
+
+@external
+def classify(value: uint256) -> uint256:
+    if value > 10:
+        return value
+    return 0
+"""
+    report = StaticAnalyzer(enabled_detectors=()).analyze_source(source, "contract.vy")
+    payload = json.loads(export_json(report))
+
+    complexity = payload["analysis_context"]["complexity_metrics"]
+    assert payload["analysis_context"]["semantic_mode"] in {"source", "compiler"}
+    assert complexity["max_complexity"] == 2
+    assert complexity["functions"][0]["name"] == "classify"
+    assert complexity["functions"][0]["risk_level"] == "LOW"
 
 
 def test_markdown_export_mentions_detector_failures_when_present() -> None:

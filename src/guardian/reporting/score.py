@@ -21,6 +21,27 @@ def score_report(report: AnalysisReport) -> tuple[int, SecurityGrade]:
     return score, SecurityGrade.from_score(score)
 
 
+# New helper to deduplicate findings based on detector, severity and location
+def deduplicate_findings(report: AnalysisReport) -> None:
+    """Remove exact duplicate DetectorResult entries from report.findings.
+    Mutates the report in-place.
+    """
+    seen = set()
+    unique = []
+    for f in report.findings:
+        key = (
+            f.detector_name,
+            f.severity,
+            f.line_number,
+            f.end_line_number,
+            f.title,
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+    report.findings = unique
+
+
 def severity_breakdown(report: AnalysisReport) -> dict[str, int]:
     """Return a dict mapping severity names to counts."""
     return {

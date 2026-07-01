@@ -103,7 +103,7 @@ def test_ai_triage_scoring_version_is_explicit_and_stable() -> None:
 def test_readme_mentions_governance_related_triage_notes() -> None:
     readme = _read("README.md")
 
-    assert "AI advisory triage" in readme
+    assert "Deterministic priority scoring" in readme
     assert "--allow-ai-fallback" in readme
 
 

@@ -20,11 +20,13 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from guardian.utils.helpers import GuardianError
+
 _DEFAULT_CONFIG_NAMES = [".guardianrc", ".guardianrc.yaml", ".guardianrc.yml"]
 _ALLOWED_FORMATS = {"cli", "json", "markdown", "sarif", "html"}
 _ALLOWED_THRESHOLDS = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 _ALLOWED_FIX_TIERS = {"A", "B", "C"}
-_ALLOWED_SEMANTIC_MODES = {"source", "compiler"}
+_ALLOWED_SEMANTIC_MODES = {"auto", "source", "compiler"}
 
 
 def _is_truthy_env(value: str | None) -> bool:
@@ -45,7 +47,7 @@ class AnalysisConfig(BaseModel):
     )
     semantic_mode: str = Field(
         default="source",
-        description="Semantic engine mode: source | compiler.",
+        description="Semantic engine mode: source | compiler | auto. 'auto' uses compiler if vyper is installed, else source.",
     )
     project_graph: bool = Field(
         default=False,
@@ -283,6 +285,22 @@ def load_config(
         with contextlib.suppress(ValueError):
             raw.setdefault("verification", {})["max_output_chars"] = int(env_test_output)
 
+    # Validate that config contains only known top-level sections.
+    _allowed_sections = {
+        "analysis",
+        "reporting",
+        "performance",
+        "remediation",
+        "ai_triage",
+        "llm",
+        "explorer",
+        "verification",
+    }
+    unknown_keys = set(raw.keys()) - _allowed_sections
+    if unknown_keys:
+        raise GuardianError(
+            f"Unknown config keys: {', '.join(sorted(unknown_keys))}. Check your .guardianrc file."
+        )
     return GuardianConfig.model_validate(raw)
 
 

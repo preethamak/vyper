@@ -160,7 +160,7 @@ Notes:
 
 - Directory mode aggregates per-file analysis results; `--project-graph` adds cross-file findings.
 - `--fix` and `--fix-dry-run` are single-file only.
-- AI triage metadata is currently applied in single-file mode.
+- Priority triage metadata is currently applied in single-file mode.
 
 Project graph config:
 
@@ -183,30 +183,62 @@ JSON findings include explainability metadata when available:
 - `evidence`
 - `why_not_suppressed`
 - `semantic_context`
+- `exploit_verification` for supported high-value findings
 
-### AI-Assisted Triage (Optional)
+### Exploit Verification Metadata
 
-AI triage is an advisory post-processor. It does **not** change detector verdicts.
+CEI/reentrancy findings include first-pass exploit verification metadata in CLI and JSON output.
+This is deterministic advisory evidence, not full exploit execution yet.
+
+The JSON field is attached per finding:
+
+```json
+{
+  "detector": "cei_violation",
+  "exploit_verification": {
+    "version": "exploit_verification_v1",
+    "vulnerability_class": "cei_reentrancy",
+    "status": "exploitable_path_candidate",
+    "function": "withdraw",
+    "patch": {
+      "strategy": "checks_effects_interactions"
+    },
+    "regression_test": {
+      "status": "skeleton"
+    }
+  }
+}
+```
+
+Current scope:
+
+- Supported: CEI/reentrancy proof-path metadata.
+- Not yet supported: deploying attacker contracts or executing generated tests automatically.
+
+### Priority Triage (Optional)
+
+Priority triage is an advisory post-processor. It does **not** change detector verdicts.
+The legacy `--ai-triage` flags remain available as aliases.
 
 ```bash
 # Enable triage metadata in output
-vyper-guard analyze contract.vy --format json --ai-triage
+vyper-guard analyze contract.vy --format json --priority-triage
 
 # Disable triage explicitly (overrides config)
-vyper-guard analyze contract.vy --no-ai-triage
+vyper-guard analyze contract.vy --no-priority-triage
 
 # Triage policy controls
-vyper-guard analyze contract.vy --format json --ai-triage \
-  --ai-triage-min-severity HIGH --ai-triage-max-items 10
+vyper-guard analyze contract.vy --format json --priority-triage \
+  --priority-triage-min-severity HIGH --priority-triage-max-items 10
 
 # LLM-backed triage mode (OpenAI-compatible endpoint)
 export GUARDIAN_LLM_API_KEY="<your_key>"
-vyper-guard analyze contract.vy --format json --ai-triage \
-  --ai-triage-mode llm --ai-llm-model gpt-5
+vyper-guard analyze contract.vy --format json --priority-triage \
+  --priority-triage-mode llm --ai-llm-model gpt-5
 
 # Explicitly allow deterministic fallback when LLM triage is unavailable
-vyper-guard analyze contract.vy --format json --ai-triage \
-  --ai-triage-mode llm --allow-ai-fallback
+vyper-guard analyze contract.vy --format json --priority-triage \
+  --priority-triage-mode llm --allow-ai-fallback
 ```
 
 JSON triage entries include deterministic scoring rationale fields:
@@ -403,7 +435,7 @@ vyper-guard analyze-address 0xYourContractAddress \
 
 # If LLM triage is enabled, fallback is opt-in
 vyper-guard analyze-address 0xYourContractAddress \
-  --ai-triage --ai-triage-mode llm --allow-ai-fallback
+  --priority-triage --priority-triage-mode llm --allow-ai-fallback
 
 # Configure explorer defaults in ~/.guardianrc
 vyper-guard explorer config set provider auto
@@ -622,7 +654,7 @@ ai_triage:
 | `GUARDIAN_SEVERITY_THRESHOLD` | Default minimum severity |
 | `GUARDIAN_MAX_AUTO_FIX_TIER` | Default auto-remediation tier ceiling (`A`, `B`, `C`) |
 | `GUARDIAN_TRUST_PARENT_CONFIG` | Allow `.guardianrc` auto-discovery in parent directories (`true/false`) |
-| `GUARDIAN_AI_TRIAGE` | Enable AI triage by default (`true/false`) |
+| `GUARDIAN_AI_TRIAGE` | Enable priority triage by default (`true/false`) |
 | `GUARDIAN_AI_TRIAGE_MIN_SEVERITY` | Minimum triage severity (`INFO..CRITICAL`) |
 | `GUARDIAN_AI_TRIAGE_MAX_ITEMS` | Maximum triage rows |
 | `GUARDIAN_AI_TRIAGE_POLICY_STATUS` | Triage policy status (`stable/experimental/deprecated`) |

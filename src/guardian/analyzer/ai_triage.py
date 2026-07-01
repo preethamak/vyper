@@ -1,4 +1,7 @@
-"""Optional AI-assisted triage post-processor (Phase 4 kickoff).
+"""Priority Triage (Deterministic) post-processor.
+
+Ranks and annotates findings by severity and evidence count using
+purely deterministic rules — no LLM or remote calls are made.
 
 Guardrails:
 - Deterministic output (no remote/model calls)
@@ -75,15 +78,17 @@ def _scoring_rationale(severity: Severity, evidence_count: int) -> dict[str, flo
 def _policy_warnings(status: str, announced: bool, sunset_after: str | None) -> list[str]:
     warnings: list[str] = []
     if status == "experimental":
-        warnings.append("AI triage policy is experimental and may change in minor releases.")
+        warnings.append("Priority triage policy is experimental and may change in minor releases.")
     if status == "deprecated":
-        warnings.append("AI triage policy is deprecated and should be migrated soon.")
+        warnings.append("Priority triage policy is deprecated and should be migrated soon.")
     if announced:
         if sunset_after:
-            warnings.append(f"AI triage policy deprecation announced; sunset after {sunset_after}.")
+            warnings.append(
+                f"Priority triage policy deprecation announced; sunset after {sunset_after}."
+            )
         else:
             warnings.append(
-                "AI triage policy deprecation announced; sunset date not yet published."
+                "Priority triage policy deprecation announced; sunset date not yet published."
             )
     return warnings
 
@@ -94,7 +99,7 @@ def triage_policy_contract(
     deprecation_announced: bool = False,
     deprecation_sunset_after: str | None = None,
 ) -> dict[str, object]:
-    """Return the policy contract for AI triage metadata.
+    """Return the policy contract for Priority Triage metadata.
 
     This is emitted in reports so downstream consumers can enforce strict
     compatibility and deprecation checks.

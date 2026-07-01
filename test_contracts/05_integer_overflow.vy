@@ -1,6 +1,8 @@
 # @version ^0.3.3
-# Vulnerability: Old Vyper version prone to integer overflow
-# Expected detections: integer_overflow, compiler_version_check
+# Fixture: old Vyper compiler advisory plus arithmetic paths.
+# Expected detections: compiler_version_check
+# Note: Vyper arithmetic is checked by default; integer_overflow only flags
+# explicit unsafe_* arithmetic opt-outs.
 
 MAX_SUPPLY: constant(uint256) = 1000000 * 10 ** 18
 

@@ -52,6 +52,12 @@ def time_locked_withdraw():
     assert block.timestamp > self.unlock_time, "Locked"
     send(msg.sender, self.balances[msg.sender])
 
+@external
+def timestamp_game():
+    # VULN: timestamp dependence outside a timelock context
+    if block.timestamp > 1000:
+        self.paused = False
+
 # ── Unprotected selfdestruct ────────────────────────────────────
 @external
 def destroy():

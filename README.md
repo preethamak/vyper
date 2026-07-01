@@ -23,16 +23,17 @@ Website: https://vyper-web.vercel.app
 ## Features
 
 - Vyper-focused static analysis for .vy contracts
-- 12 built-in detectors (reentrancy, access control, external call safety, arithmetic risks)
+- 22 built-in detectors (reentrancy, access control, external call safety, arithmetic risks, input validation, ERC-20 return handling)
 - Always-on compiler advisories (`compiler_version_check`)
 - Multiple report formats: CLI, JSON, Markdown, SARIF, HTML
 - Verification workflows for unit and fuzz tests (`verify`, `test`, `fuzz`)
 - Baseline suppression and baseline-diff for CI stability
 - Optional remediation mode with tiered auto-fix controls
 - Optional compiler-backed semantic mode (install `vyper` extra)
+- CFG-aware CEI analysis plus cyclomatic complexity metrics in reports and `stats`
 - Project-wide graph for directory scans (imports, interfaces, call/state maps)
 - Explorer and on-chain analysis workflows (`explorer`, `analyze-address`)
-- AI advisory triage support with governance notes and explicit fallback controls (`--allow-ai-fallback`)
+- Deterministic priority scoring with governance notes and explicit fallback controls (`--allow-ai-fallback`)
 
 ## Installation
 
@@ -214,6 +215,16 @@ Additional trust penalty:
 10. `send_in_loop`
 11. `unchecked_subtraction`
 12. `cei_violation`
+13. `tx_origin_auth`
+14. `missing_zero_address_check`
+15. `weak_randomness`
+16. `locked_ether`
+17. `shadowed_state_variable`
+18. `missing_input_validation`
+19. `unsafe_assembly`
+20. `missing_return_value`
+21. `division_before_multiplication`
+22. `incorrect_erc20_return`
 
 Compiler advisories are always evaluated and reported as `compiler_version_check` findings.
 

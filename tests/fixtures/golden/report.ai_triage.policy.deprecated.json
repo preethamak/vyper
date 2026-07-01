@@ -8,7 +8,7 @@
     "sunset_after": "2026-12-31"
   },
   "warnings": [
-    "AI triage policy is deprecated and should be migrated soon.",
-    "AI triage policy deprecation announced; sunset after 2026-12-31."
+    "Priority triage policy is deprecated and should be migrated soon.",
+    "Priority triage policy deprecation announced; sunset after 2026-12-31."
   ]
 }

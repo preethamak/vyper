@@ -77,6 +77,7 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         con.print()
 
     _print_verification_section(con, report)
+    _print_triage_section(con, report)
 
     if not report.findings:
         con.print("  [green bold]✅ No issues found — looking good![/green bold]")
@@ -136,9 +137,85 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
                 con.print(f"      [dim]{snippet_line}[/dim]")
         if finding.fix_suggestion:
             con.print(f"    [green]💡 Fix:[/green] {finding.fix_suggestion}")
+        if finding.exploit_verification:
+            _print_exploit_verification(con, finding.exploit_verification)
         con.print()
 
     _print_footer(con, report)
+
+
+def _print_triage_section(con: Console, report: AnalysisReport) -> None:
+    if not report.ai_triage:
+        return
+
+    policy = report.ai_triage_policy if isinstance(report.ai_triage_policy, dict) else {}
+    policy_version = str(policy.get("policy_version") or "unknown")
+    policy_status = str(policy.get("status") or "unknown")
+    scoring = str(policy.get("scoring") or "triage_scoring_v1")
+
+    con.print("  [bold]AI-Assisted Triage[/bold]")
+    con.print(
+        f"  [dim]policy={policy_version} status={policy_status} scoring={scoring}; "
+        "advisory metadata only[/dim]"
+    )
+
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True)
+    table.add_column("Rank", justify="right", width=5)
+    table.add_column("Bucket", style="bold", width=16)
+    table.add_column("Detector", width=26)
+    table.add_column("Severity", width=10)
+    table.add_column("Next Step", ratio=1)
+
+    for item in report.ai_triage[:10]:
+        if not isinstance(item, dict):
+            continue
+        table.add_row(
+            str(item.get("rank") or "—"),
+            str(item.get("bucket") or "—"),
+            str(item.get("detector") or "—"),
+            str(item.get("severity") or "—"),
+            str(item.get("next_step") or "—"),
+        )
+
+    con.print(table)
+    con.print()
+
+
+def _print_exploit_verification(con: Console, verification: dict[str, object]) -> None:
+    status = str(verification.get("status") or "unknown")
+    confidence = str(verification.get("confidence") or "unknown")
+    klass = str(verification.get("vulnerability_class") or "unknown")
+    context = str(verification.get("protocol_context") or "unknown context")
+    con.print(
+        f"    [bold cyan]Exploit verification:[/bold cyan] "
+        f"{klass} / {status} / confidence={confidence}"
+    )
+    con.print(f"    [dim]Context:[/dim] {context}")
+
+    path = verification.get("path")
+    if isinstance(path, list) and path:
+        con.print("    [dim]Proof path:[/dim]")
+        for item in path[:4]:
+            if not isinstance(item, dict):
+                continue
+            step = str(item.get("step") or "step")
+            line = item.get("line")
+            evidence = str(item.get("evidence") or "")
+            line_text = f"line {line}" if line else "line —"
+            con.print(f"      [dim]- {step} ({line_text}): {evidence}[/dim]")
+
+    patch = verification.get("patch")
+    if isinstance(patch, dict):
+        summary = str(patch.get("summary") or "")
+        if summary:
+            con.print(f"    [green]Patch strategy:[/green] {summary}")
+
+    regression = verification.get("regression_test")
+    if isinstance(regression, dict):
+        name = str(regression.get("name") or "")
+        status = str(regression.get("status") or "planned")
+        if name:
+            con.print(f"    [cyan]Regression test:[/cyan] {name} ({status})")
 
 
 def _print_footer(con: Console, report: AnalysisReport) -> None:

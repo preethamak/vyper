@@ -75,6 +75,8 @@ def report_to_dict(report: AnalysisReport) -> dict[str, Any]:
             fd["why_not_suppressed"] = f.why_not_suppressed
         if f.semantic_context:
             fd["semantic_context"] = f.semantic_context
+        if f.exploit_verification:
+            fd["exploit_verification"] = f.exploit_verification
         fd["fingerprint"] = _fingerprint(fd)
         findings.append(fd)
 
