@@ -4,11 +4,17 @@ All notable changes to Vyper Guard are documented in this file.
 
 ## Unreleased
 
+## 2026-07-07 — v0.5.1
+
 ### Added
 
 - Added first-pass CEI/reentrancy exploit verification metadata. CEI findings now include a
   structured proof path, attacker-control hints, patch strategy, and regression-test skeleton in
   JSON output and terminal details.
+
+### Release
+
+- Version bump to `0.5.1`.
 
 ## 2026-06-28 — v0.5.0
 
