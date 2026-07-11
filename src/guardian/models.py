@@ -95,6 +95,10 @@ class DetectorResult(BaseModel):
             "where Vyper Guard can build a deterministic proof path."
         ),
     )
+    audit_classification: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Reviewed-audit match or new-candidate classification.",
+    )
 
 
 class FunctionInfo(BaseModel):
@@ -197,11 +201,11 @@ class SecurityGrade(str, enum.Enum):
     @property
     def label(self) -> str:
         labels = {
-            SecurityGrade.A_PLUS: "Production Ready",
-            SecurityGrade.A: "Minor fixes needed",
-            SecurityGrade.B: "Review required",
-            SecurityGrade.C: "Risky — major fixes needed",
-            SecurityGrade.F: "Do not deploy",
+            SecurityGrade.A_PLUS: "Low detected heuristic risk",
+            SecurityGrade.A: "Limited detected heuristic risk",
+            SecurityGrade.B: "Review recommended",
+            SecurityGrade.C: "Elevated detected heuristic risk",
+            SecurityGrade.F: "High detected heuristic risk",
         }
         return labels[self]
 

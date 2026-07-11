@@ -1,0 +1,5 @@
+{
+  "$schema": "vyper-guard-labels/v2",
+  "description": "Independently reviewed labels only. Scanner output must not be promoted to a label.",
+  "labels": []
+}

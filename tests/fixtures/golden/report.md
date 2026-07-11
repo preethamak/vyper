@@ -6,7 +6,7 @@
 | **Date** | 2026-01-02 03:04 UTC |
 | **Vyper Pragma** | `^0.4.0` |
 | **Security Score** | **77/100** |
-| **Grade** | ✅ **A** — Minor fixes needed |
+| **Grade** | ✅ **A** — Limited detected heuristic risk |
 | **Detectors Run** | 2 |
 | **Tool Version** | `vyper-guard v<VERSION>` |
 

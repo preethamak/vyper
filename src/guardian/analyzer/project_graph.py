@@ -27,6 +27,12 @@ _IMPORT_RE = re.compile(r"^import\s+([A-Za-z0-9_./]+)")
 _INTERFACE_RE = re.compile(r"^interface\s+(\w+)\s*:")
 _DEF_RE = re.compile(r"^def\s+(\w+)\s*\(")
 _INTERFACE_USE_RE = re.compile(r"^(implements|uses|initializes|exports)\s*:\s*(.+)$")
+_INTERFACE_CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(([^()\n]+)\)\s*\.\s*([A-Za-z_]\w*)\s*\(")
+_LOW_LEVEL_CALL_RE = re.compile(r"\b(send|raw_call)\s*\(\s*([^,\n)]+)")
+_OWNER_GUARD_RE = re.compile(
+    r"\bassert\s+(?:msg\.sender\s*==\s*self\.(\w+)|self\.(\w+)\s*==\s*msg\.sender)"
+)
+_ROLE_GUARD_RE = re.compile(r"\bself\._(?:check|enforce)_role\s*\(([^)]+)\)")
 
 
 @dataclass
@@ -75,6 +81,8 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
     unresolved_imports: list[dict[str, object]] = []
     interface_uses: list[dict[str, object]] = []
     call_graph: list[dict[str, object]] = []
+    external_call_graph: list[dict[str, object]] = []
+    role_map: list[dict[str, object]] = []
     state_map: list[dict[str, object]] = []
     findings: dict[str, list[DetectorResult]] = {}
 
@@ -106,19 +114,25 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
         )
 
         call_graph.extend(_build_internal_call_graph(contract))
+        external_call_graph.extend(_build_external_call_graph(contract))
+        role_map.extend(_build_role_map(contract))
         state_map.append(_build_state_map(contract))
 
         uses = _extract_interface_uses(contract)
+        imported_names = _extract_imported_names(contract.imports)
         for use in uses:
             iface = str(use["name"])
             defined = interface_defs.get(iface)
             status = "resolved"
             missing_functions: list[str] = []
-            if defined is None:
+            if defined is None and iface in imported_names:
+                status = "external_import"
+            elif defined is None:
                 status = "missing"
             else:
                 declared = set(defined)
                 implemented = {f.name for f in contract.functions}
+                implemented.update(var.name for var in contract.state_variables if var.is_public)
                 missing_functions = sorted(declared - implemented)
                 if missing_functions:
                     status = "mismatch"
@@ -206,6 +220,8 @@ def build_project_graph(target_dir: Path, contract_paths: Iterable[Path]) -> Pro
         ],
         "interface_uses": interface_uses,
         "call_graph": call_graph,
+        "external_call_graph": external_call_graph,
+        "role_map": role_map,
         "state_map": state_map,
         "errors": errors,
     }
@@ -255,6 +271,16 @@ def _extract_import_modules(import_lines: Iterable[str]) -> list[str]:
         if match := _IMPORT_RE.match(stripped):
             modules.append(match.group(1))
     return modules
+
+
+def _extract_imported_names(import_lines: Iterable[str]) -> set[str]:
+    names: set[str] = set()
+    for line in import_lines:
+        stripped = line.strip()
+        match = re.match(r"^from\s+[A-Za-z0-9_./]+\s+import\s+(.+)$", stripped)
+        if match:
+            names.update(item.strip().split(" as ", 1)[-1] for item in match.group(1).split(","))
+    return names
 
 
 def _extract_interface_defs(contract: ContractInfo) -> dict[str, dict[str, object]]:
@@ -317,6 +343,58 @@ def _build_internal_call_graph(contract: ContractInfo) -> list[dict[str, object]
                     }
                 )
     return edges
+
+
+def _build_external_call_graph(contract: ContractInfo) -> list[dict[str, object]]:
+    edges: list[dict[str, object]] = []
+    for func in contract.functions:
+        body_start = func.end_line - len(func.body_lines) + 1
+        for index, line in enumerate(func.body_lines):
+            code = line.split("#", 1)[0]
+            for match in _INTERFACE_CALL_RE.finditer(code):
+                edges.append(
+                    {
+                        "from": f"{contract.file_path}:{func.name}",
+                        "interface": match.group(1),
+                        "target": match.group(2).strip(),
+                        "method": match.group(3),
+                        "type": "interface",
+                        "line": body_start + index,
+                    }
+                )
+            for match in _LOW_LEVEL_CALL_RE.finditer(code):
+                edges.append(
+                    {
+                        "from": f"{contract.file_path}:{func.name}",
+                        "target": match.group(2).strip(),
+                        "method": match.group(1),
+                        "type": "low_level",
+                        "line": body_start + index,
+                    }
+                )
+    return edges
+
+
+def _build_role_map(contract: ContractInfo) -> list[dict[str, object]]:
+    roles: list[dict[str, object]] = []
+    for func in contract.functions:
+        guards: set[str] = set()
+        for match in _OWNER_GUARD_RE.finditer(func.body_text):
+            guards.add(next(group for group in match.groups() if group))
+        for match in _ROLE_GUARD_RE.finditer(func.body_text):
+            guards.add(match.group(1).strip())
+        roles.append(
+            {
+                "function": f"{contract.file_path}:{func.name}",
+                "external": "external" in func.decorators,
+                "guards": sorted(guards),
+                "nonreentrant": func.is_nonreentrant,
+                "writes_state": any(
+                    _is_write(var.name, func.body_text) for var in contract.state_variables
+                ),
+            }
+        )
+    return roles
 
 
 def _build_state_map(contract: ContractInfo) -> dict[str, object]:

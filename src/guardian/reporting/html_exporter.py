@@ -347,6 +347,46 @@ def _findings_overview_html(report: AnalysisReport) -> str:
     )
 
 
+def _trust_triage_html(report: AnalysisReport) -> str:
+    trust = report.analysis_context.get("analysis_trust", {})
+    triage = report.analysis_context.get("triage_summary", {})
+    if not isinstance(trust, dict) or not isinstance(triage, dict):
+        return ""
+    candidates = triage.get("candidates", [])
+    rows = "".join(
+        "<tr>"
+        f"<td>{_escape(item.get('severity', ''))}</td>"
+        f"<td>{_escape(item.get('confidence', ''))}</td>"
+        f"<td>{_escape(item.get('detector', ''))}</td>"
+        f"<td>{_escape(item.get('title', ''))}</td>"
+        f"<td>{_escape(item.get('classification', 'new_candidate'))}</td>"
+        f"<td>{_escape(item.get('occurrences', 1))}</td>"
+        "</tr>"
+        for item in candidates
+        if isinstance(item, dict)
+    )
+    reasons = (
+        "".join(f"<li>{_escape(reason)}</li>" for reason in trust.get("degradation_reasons", []))
+        or "<li>None</li>"
+    )
+    candidate_rows = rows or "<tr><td colspan='6'>No candidates.</td></tr>"
+    return (
+        "<section class='panel stack'><h2>Analysis Trust and Concise Triage</h2>"
+        "<div class='meta-grid'>"
+        f"<div><strong>Trust</strong><span>{_escape(trust.get('level', 'unknown'))}</span></div>"
+        f"<div><strong>Semantic engine</strong><span>{_escape(report.analysis_context.get('semantic_engine', 'unknown'))}</span></div>"
+        f"<div><strong>Raw findings</strong><span>{_escape(triage.get('raw_findings', 0))}</span></div>"
+        f"<div><strong>Grouped repetitions</strong><span>{_escape(triage.get('omitted_repetitions', 0))}</span></div>"
+        "</div><h4>Degradation reasons</h4>"
+        f"<ul>{reasons}</ul>"
+        "<h4>Prioritized candidates</h4><table class='table'>"
+        "<thead><tr><th>Severity</th><th>Confidence</th><th>Detector</th>"
+        "<th>Candidate</th><th>Audit status</th><th>Occurrences</th></tr></thead>"
+        f"<tbody>{candidate_rows}</tbody>"
+        "</table></section>"
+    )
+
+
 def _function_inventory_html(stats: dict[str, Any]) -> str:
     functions = stats.get("functions", [])
     if not functions:
@@ -446,6 +486,7 @@ def _finding_cards_html(report: AnalysisReport) -> str:
             if finding.fix_suggestion
             else "No automatic remediation suggestion available."
         )
+        classification = finding.audit_classification.get("classification", "new_candidate")
 
         cards.append(
             "<article class='finding-card'>"
@@ -458,6 +499,7 @@ def _finding_cards_html(report: AnalysisReport) -> str:
             f"<div><strong>Confidence</strong><span>{_escape(finding.confidence.value)}</span></div>"
             f"<div><strong>Type</strong><span>{_escape(finding.vulnerability_type.value)}</span></div>"
             f"<div><strong>Location</strong><span>{_escape(_finding_location(finding))}</span></div>"
+            f"<div><strong>Audit status</strong><span>{_escape(classification)}</span></div>"
             "</div>"
             "<section><h4>Description</h4>"
             f"<p>{_escape(finding.description)}</p></section>"
@@ -484,6 +526,7 @@ def export_html(report: AnalysisReport, output_path: str | Path | None = None) -
     payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
     context_json = json.dumps(report.analysis_context or {}, indent=2, ensure_ascii=False)
     verification_html = _verification_panel_html(report)
+    trust_triage_html = _trust_triage_html(report)
     imports_text = "\n".join(stats["imports"]) or "None"
     events_text = "\n".join(stats["events"]) or "None"
     state_vars_text = "\n".join(stats["state_variables"]) or "None"
@@ -610,6 +653,7 @@ def export_html(report: AnalysisReport, output_path: str | Path | None = None) -
     </section>
 
     {verification_html}
+    {trust_triage_html}
 
         <section class=\"panel stack\">
       <h2>Findings Overview</h2>

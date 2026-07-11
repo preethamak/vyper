@@ -14,7 +14,7 @@
   "vyper_version": "^0.4.0",
   "security_score": 77,
   "grade": "A",
-  "grade_label": "Minor fixes needed",
+  "grade_label": "Limited detected heuristic risk",
   "summary": {
     "total": 2,
     "critical": 0,

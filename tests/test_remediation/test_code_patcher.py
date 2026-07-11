@@ -123,6 +123,15 @@ class TestCodePatcher:
         assert "Y" in result
         assert len(result) == 6
 
+    def test_same_line_insertions_preserve_content_on_both_sides(self) -> None:
+        patcher = CodePatcher(["base"])
+        patcher.add_patch(Patch(start_line=1, end_line=1, new_lines=["before-a", "base"]))
+        patcher.add_patch(Patch(start_line=1, end_line=1, new_lines=["before-b", "base"]))
+        patcher.add_patch(Patch(start_line=1, end_line=1, new_lines=["base", "after-a"]))
+        patcher.add_patch(Patch(start_line=1, end_line=1, new_lines=["base", "after-b"]))
+
+        assert patcher.apply() == ["before-a", "before-b", "base", "after-a", "after-b"]
+
     def test_overlapping_patches_raise(self) -> None:
         lines = ["a", "b", "c", "d"]
         patcher = CodePatcher(lines)

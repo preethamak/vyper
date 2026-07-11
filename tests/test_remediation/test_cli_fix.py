@@ -7,6 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from guardian.cli import app
@@ -60,6 +61,10 @@ def withdraw(amount: uint256):
 class TestFixCLI:
     """CLI --fix flag integration tests."""
 
+    @pytest.fixture(autouse=True)
+    def _compiler_unavailable(self, monkeypatch) -> None:
+        monkeypatch.setattr("guardian.remediation.validator.shutil.which", lambda _: None)
+
     def test_fix_flag_exists(self) -> None:
         """--fix flag doesn't crash on a trivial run."""
         with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
@@ -68,6 +73,34 @@ class TestFixCLI:
             result = runner.invoke(app, ["analyze", f.name, "--fix"])
         os.unlink(f.name)
         assert result.exit_code == 0
+
+    def test_dry_run_report_contains_validation_evidence(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".vy", mode="w", delete=False) as f:
+            f.write(VULNERABLE_SOURCE)
+            f.flush()
+            tmp_path = f.name
+        report_path = Path(tmp_path).with_suffix(".fix.json")
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "analyze",
+                    tmp_path,
+                    "--fix-dry-run",
+                    "--fix-report",
+                    str(report_path),
+                ],
+            )
+            assert result.exit_code == 0
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            assert payload["validation"]["structural"]["status"] == "passed"
+            assert payload["validation"]["compiler"]["status"] in {
+                "passed",
+                "unavailable",
+            }
+        finally:
+            report_path.unlink(missing_ok=True)
+            os.unlink(tmp_path)
 
     def test_fix_creates_fixed_file(self) -> None:
         """--fix should create a .fixed.vy file for vulnerable contracts."""

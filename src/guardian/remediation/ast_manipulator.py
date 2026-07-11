@@ -56,19 +56,36 @@ class CodePatcher:
                 if patch.start_line == existing.start_line and patch.end_line == existing.end_line:
                     if patch.start_line == patch.end_line:
                         base_line = self._original[patch.start_line - 1]
-                        existing_is_insert = (
-                            bool(existing.new_lines) and existing.new_lines[-1] == base_line
+                        existing_base = (
+                            0
+                            if existing.new_lines and existing.new_lines[0] == base_line
+                            else len(existing.new_lines) - 1
+                            if existing.new_lines and existing.new_lines[-1] == base_line
+                            else existing.new_lines.index(base_line)
+                            if existing.new_lines.count(base_line) == 1
+                            else -1
                         )
-                        new_is_insert = bool(patch.new_lines) and patch.new_lines[-1] == base_line
-                        if existing_is_insert and new_is_insert:
-                            merged_prefix = list(existing.new_lines[:-1])
-                            for line in patch.new_lines[:-1]:
-                                if line not in merged_prefix:
-                                    merged_prefix.append(line)
+                        new_base = (
+                            0
+                            if patch.new_lines and patch.new_lines[0] == base_line
+                            else len(patch.new_lines) - 1
+                            if patch.new_lines and patch.new_lines[-1] == base_line
+                            else patch.new_lines.index(base_line)
+                            if patch.new_lines.count(base_line) == 1
+                            else -1
+                        )
+                        if existing_base >= 0 and new_base >= 0:
+                            merged_lines = [
+                                *existing.new_lines[:existing_base],
+                                *patch.new_lines[:new_base],
+                                base_line,
+                                *existing.new_lines[existing_base + 1 :],
+                                *patch.new_lines[new_base + 1 :],
+                            ]
                             self._patches[i] = Patch(
                                 start_line=existing.start_line,
                                 end_line=existing.end_line,
-                                new_lines=[*merged_prefix, base_line],
+                                new_lines=merged_lines,
                                 description=existing.description or patch.description,
                             )
                             return

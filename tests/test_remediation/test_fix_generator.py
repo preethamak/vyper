@@ -150,11 +150,12 @@ def upgrade(impl: address):
 """
 
 OLD_PRAGMA_CONTRACT = """\
-# @version ^0.2.15
+# @version 0.2.14
 
 owner: public(address)
 
 @external
+@nonreentrant("lock")
 def foo():
     pass
 """
@@ -191,6 +192,31 @@ class TestFixMissingNonreentrant:
         assert fix is not None
         assert fix.diff != ""
         assert "@nonreentrant" in fix.diff
+
+    def test_nonreentrant_precedes_function_definition(self) -> None:
+        _, _, patched = _analyze_and_fix(REENTRANCY_CONTRACT)
+        assert "@external\n@nonreentrant\ndef withdraw" in patched
+        assert "def withdraw(amount: uint256):\n@nonreentrant" not in patched
+
+    def test_cumulative_fixes_preserve_all_events_and_logs(self) -> None:
+        source = (
+            REENTRANCY_CONTRACT.replace(
+                '    raw_call(msg.sender, b"", value=amount)',
+                "    send(msg.sender, amount)",
+            )
+            + """
+
+@external
+def transfer(to: address, amount: uint256):
+    self.balances[msg.sender] -= amount
+    self.balances[to] += amount
+"""
+        )
+        _, _, patched = _analyze_and_fix(source)
+        assert "event WithdrawExecuted:\n    caller: indexed(address)" in patched
+        assert "event TransferExecuted:\n    caller: indexed(address)" in patched
+        assert "log WithdrawExecuted(msg.sender)" in patched
+        assert "log TransferExecuted(msg.sender)" in patched
 
 
 # ---------------------------------------------------------------------------

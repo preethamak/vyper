@@ -83,6 +83,8 @@ def report_to_sarif_dict(report: AnalysisReport) -> dict[str, Any]:
                 "vulnerability_type": finding.vulnerability_type.value,
             },
         }
+        if finding.audit_classification:
+            sarif_result["properties"]["audit_classification"] = finding.audit_classification
 
         if finding.line_number is not None:
             region: dict[str, Any] = {"startLine": finding.line_number}
@@ -125,6 +127,8 @@ def report_to_sarif_dict(report: AnalysisReport) -> dict[str, Any]:
                         "low": report.low_count,
                         "info": report.info_count,
                     },
+                    "analysis_trust": report.analysis_context.get("analysis_trust", {}),
+                    "triage_summary": report.analysis_context.get("triage_summary", {}),
                 },
             }
         ],

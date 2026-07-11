@@ -22,6 +22,7 @@ import yaml
 from rich import box
 from rich.columns import Columns
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.rule import Rule
@@ -1358,7 +1359,43 @@ def _load_finding_baseline(path: Path) -> set[str]:
         fingerprints = payload.get("fingerprints")
         if isinstance(fingerprints, list):
             return {str(item) for item in fingerprints if isinstance(item, str)}
-    raise ValueError("expected JSON list[str] or object with 'fingerprints' list")
+        acceptances = payload.get("acceptances")
+        if isinstance(acceptances, list):
+            active: set[str] = set()
+            now = datetime.now(timezone.utc)
+            for index, acceptance in enumerate(acceptances):
+                if not isinstance(acceptance, dict):
+                    raise ValueError(f"acceptances[{index}] must be an object")
+                fingerprint = acceptance.get("fingerprint")
+                reason = acceptance.get("reason")
+                owner = acceptance.get("owner")
+                expires_at = acceptance.get("expires_at")
+                if not isinstance(fingerprint, str) or not fingerprint.strip():
+                    raise ValueError(f"acceptances[{index}] requires fingerprint")
+                if not isinstance(reason, str) or not reason.strip():
+                    raise ValueError(f"acceptances[{index}] requires reason")
+                if not isinstance(owner, str) or not owner.strip():
+                    raise ValueError(f"acceptances[{index}] requires owner")
+                if expires_at is not None:
+                    if not isinstance(expires_at, str):
+                        raise ValueError(
+                            f"acceptances[{index}].expires_at must be an ISO timestamp"
+                        )
+                    try:
+                        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"acceptances[{index}].expires_at must be an ISO timestamp"
+                        ) from exc
+                    if expiry.tzinfo is None:
+                        expiry = expiry.replace(tzinfo=timezone.utc)
+                    if expiry <= now:
+                        continue
+                active.add(fingerprint)
+            return active
+    raise ValueError(
+        "expected JSON list[str], object with 'fingerprints', or v2 object with 'acceptances'"
+    )
 
 
 def _write_finding_baseline(path: Path, fingerprints: set[str], *, target: str) -> None:
@@ -4827,6 +4864,30 @@ def _run_fix_mode(
     # Build patched source once so we can provide post-fix analysis clarity
     # even in dry-run mode.
     patched = gen.patched_source()
+    from guardian.remediation.validator import FixValidator
+
+    validation = FixValidator().validate_for_release(
+        patched.splitlines(),
+        source_path=file_path.resolve(),
+    )
+    remediation_report["validation"] = validation
+    compiler_status = validation["compiler"]["status"]
+    if validation["structural"]["status"] == "failed":
+        con.print(
+            f"  [{ERR}]Structural validation failed; patched files will not be written.[/{ERR}]"
+        )
+    elif compiler_status == "failed":
+        con.print(
+            f"  [{ERR}]Compiler validation failed; patched files will not be written.[/{ERR}]"
+        )
+    elif compiler_status == "unavailable":
+        con.print(
+            f"  [{WARN}]Compiler validation unavailable:[/{WARN}] install vyper before "
+            "treating this remediation as verified."
+        )
+    else:
+        con.print(f"  [{OK}]Patched source compiled successfully.[/{OK}]")
+    con.print()
 
     post_fix_payload: dict[str, object] | None = None
     try:
@@ -4890,6 +4951,16 @@ def _run_fix_mode(
         }
         if post_fix_payload is not None:
             remediation_report["post_fix_analysis"] = post_fix_payload
+        return remediation_report
+
+    if not validation["ok"]:
+        con.print(f"  [{ERR}]Write blocked because remediation validation failed.[/{ERR}]")
+        remediation_report["artifact"] = {
+            "fixed_file": None,
+            "original_overwritten": False,
+            "backup_file": None,
+            "write_blocked": True,
+        }
         return remediation_report
 
     fixed_path = file_path.with_suffix(".fixed.vy")
@@ -4997,6 +5068,7 @@ def detectors_cmd() -> None:
 
     sev_counts = Counter(d["severity"] for d in dets)
     cat_counts = Counter(d["vulnerability_type"] for d in dets)
+    maturity_counts = Counter(d["maturity"] for d in dets)
 
     sev_table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold")
     sev_table.add_column("Severity", style="bold")
@@ -5047,6 +5119,7 @@ def detectors_cmd() -> None:
     table.add_column("Detector", style=f"bold {ACCENT}", min_width=30, no_wrap=True)
     table.add_column("Severity", width=12, justify="center")
     table.add_column("Category", width=24, no_wrap=True)
+    table.add_column("Maturity", width=13, no_wrap=True)
     table.add_column("Description", ratio=1, overflow="fold")
 
     for i, d in enumerate(dets, 1):
@@ -5058,12 +5131,20 @@ def detectors_cmd() -> None:
             d["name"],
             sev_text,
             d["vulnerability_type"],
+            d["maturity"],
             d["description"],
         )
 
     console.print(table)
     console.print()
-    console.print(f"  [{DIM}]{len(dets)} detectors available  •  all enabled by default[/{DIM}]")
+    console.print(
+        f"  [{DIM}]{len(dets)} detectors  •  supported={maturity_counts['supported']} "
+        f"beta={maturity_counts['beta']} experimental={maturity_counts['experimental']}[/{DIM}]"
+    )
+    console.print(
+        f"  [{DIM}]Use --detectors recommended for supported+beta rules; "
+        "--detectors all preserves the full legacy set.[/dim]"
+    )
     console.print(f"  [{DIM}]Docs: https://deepwiki.com/preethamak/vyper[/{DIM}]")
     console.print()
 
@@ -6455,14 +6536,14 @@ analysis:
   # Detectors to skip
   disabled_detectors: []
   # Minimum severity to report: CRITICAL, HIGH, MEDIUM, LOW, INFO
-    severity_threshold: LOW
-    # Semantic mode: auto (compiler when available) | source | compiler
-    semantic_mode: auto
-    # Project graph (directory scans only)
-    project_graph: false
+  severity_threshold: LOW
+  # Semantic mode: auto (compiler when available) | source | compiler
+  semantic_mode: auto
+  # Project graph (directory scans only)
+  project_graph: false
 
 reporting:
-    # Default output format: cli, json, markdown, sarif, html
+  # Default output format: cli, json, markdown, sarif, html
   default_format: cli
   show_source_snippets: true
   show_fix_suggestions: true
@@ -6472,44 +6553,44 @@ performance:
   cache_enabled: true
 
 remediation:
-    # Maximum auto-remediation risk tier to auto-apply: A, B, C
-    max_auto_fix_tier: C
+  # Maximum auto-remediation risk tier to auto-apply: A, B, C
+  max_auto_fix_tier: C
 
 ai_triage:
-    enabled: false
-    # Minimum severity included in triage table
-    min_severity: LOW
-    # Cap triage rows for noisy contracts
-    max_items: 50
-    # Governance policy state (stable | experimental | deprecated)
-    policy_status: stable
-    # Deprecation lifecycle controls
-    deprecation_announced: false
-    deprecation_sunset_after: null
+  enabled: false
+  # Minimum severity included in triage table
+  min_severity: LOW
+  # Cap triage rows for noisy contracts
+  max_items: 50
+  # Governance policy state (stable | experimental | deprecated)
+  policy_status: stable
+  # Deprecation lifecycle controls
+  deprecation_announced: false
+  deprecation_sunset_after: null
 
 llm:
-    # Enable LLM-backed triage/agent features
-    enabled: false
-    # Provider type (currently openai_compatible)
-    provider: openai_compatible
-    # Model name for API calls
-    model: gpt-5
-    # OpenAI-compatible API base URL
-    base_url: https://api.openai.com/v1
-    # Prefer setting via env: GUARDIAN_LLM_API_KEY
-    api_key: null
-    # Low temperature for stable security triage
-    temperature: 0.1
-    # Agent memory JSONL location
-    memory_file: .guardian_agent_memory.jsonl
-    # Max retained entries in agent memory JSONL file
-    memory_max_entries: 2000
+  # Enable LLM-backed triage/agent features
+  enabled: false
+  # Provider type (currently openai_compatible)
+  provider: openai_compatible
+  # Model name for API calls
+  model: gpt-5
+  # OpenAI-compatible API base URL
+  base_url: https://api.openai.com/v1
+  # Prefer setting via env: GUARDIAN_LLM_API_KEY
+  api_key: null
+  # Low temperature for stable security triage
+  temperature: 0.1
+  # Agent memory JSONL location
+  memory_file: .guardian_agent_memory.jsonl
+  # Max retained entries in agent memory JSONL file
+  memory_max_entries: 2000
 
 explorer:
-    provider: etherscan
-    network: ethereum
-    # Prefer setting via env: GUARDIAN_EXPLORER_API_KEY
-    api_key: null
+  provider: etherscan
+  network: ethereum
+  # Prefer setting via env: GUARDIAN_EXPLORER_API_KEY
+  api_key: null
 """
 
 
@@ -6625,7 +6706,8 @@ def monitor(
     except Exception as exc:
         console.print(f"[{ERR}]Error loading monitor module:[/{ERR}] {exc}")
         console.print(
-            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  pip install 'vyper-guard[[monitor]]'"
+            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  "
+            "pip install 'vyper-guard\\[monitor]'"
         )
         raise typer.Exit(code=2) from exc
 
@@ -6648,9 +6730,10 @@ def monitor(
             max_backfill_blocks=max_backfill_blocks,
         )
     except Web3NotAvailableError as exc:
-        console.print(f"[{ERR}]{exc}[/{ERR}]")
+        console.print(f"[{ERR}]{escape(str(exc))}[/{ERR}]")
         console.print(
-            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  pip install 'vyper-guard[[monitor]]'"
+            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  "
+            "pip install 'vyper-guard\\[monitor]'"
         )
         raise typer.Exit(code=2) from exc
 
@@ -6749,7 +6832,8 @@ def baseline(
     except Exception as exc:
         console.print(f"[{ERR}]Error loading monitor module:[/{ERR}] {exc}")
         console.print(
-            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  pip install 'vyper-guard[[monitor]]'"
+            f"\n  [{DIM}]Install monitoring dependencies:[/{DIM}]  "
+            "pip install 'vyper-guard\\[monitor]'"
         )
         raise typer.Exit(code=2) from exc
 
@@ -6763,7 +6847,7 @@ def baseline(
             max_backfill_blocks=max_backfill_blocks,
         )
     except Web3NotAvailableError as exc:
-        console.print(f"[{ERR}]{exc}[/{ERR}]")
+        console.print(f"[{ERR}]{escape(str(exc))}[/{ERR}]")
         raise typer.Exit(code=2) from exc
 
     if not watcher.is_connected():

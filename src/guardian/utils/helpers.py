@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 # Max file size can be overridden via GUARD_MAX_FILE_MB env var (default 10 MB)
@@ -71,7 +73,7 @@ def truncate(text: str, max_len: int = 200) -> str:
 
 
 def check_vyper_available() -> str | None:
-    """Check whether the ``vyper`` package is importable.
+    """Return the importable package or executable Vyper version.
 
     Returns:
         The vyper version string if available, or *None*.
@@ -81,4 +83,19 @@ def check_vyper_available() -> str | None:
 
         return str(getattr(vyper, "__version__", "unknown"))
     except ImportError:
-        return None
+        executable = shutil.which("vyper")
+        if executable is None:
+            return None
+        try:
+            completed = subprocess.run(
+                [executable, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        return completed.stdout.strip() or "unknown"

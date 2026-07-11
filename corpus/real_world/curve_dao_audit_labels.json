@@ -1,0 +1,16 @@
+{
+  "$schema": "vyper-guard-labels/v2",
+  "description": "Published Curve DAO audit labels used only for rediscovery attribution.",
+  "labels": [
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_zero_address_check",
+      "verdict": "true_positive",
+      "reviewer": "Trail of Bits",
+      "reviewed_at": "2020-06-01T00:00:00Z",
+      "evidence": "https://docs.curve.finance/assets/pdf/audits/curve-dao-ToB-final.pdf",
+      "finding_id": "TOB-CURVE-DAO-011",
+      "function": "commit_transfer_ownership"
+    }
+  ]
+}

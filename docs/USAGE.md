@@ -61,6 +61,20 @@ vyper-guard analyze contract.vy --semantic-mode source
 vyper-guard analyze contract.vy --semantic-mode compiler
 ```
 
+Compiler mode records `semantic_engine`, `semantic_compiler_version`, and
+`semantic_fallback_reason` in `analysis_context`. Vyper Guard first uses an
+importable Vyper package, then a pragma-compatible executable. Configure a
+version registry when a project contains contracts from several compiler eras:
+
+```bash
+export GUARDIAN_VYPER_BINARIES='{"0.3.10":"/opt/vyper-0.3.10/bin/vyper","0.4.3":"/opt/vyper-0.4.3/bin/vyper"}'
+```
+
+Each executable is validated with `--version`; the newest compatible compiler
+is selected. Vyper Guard never downloads a compiler implicitly. If none can
+satisfy the pragma, analysis falls back to source heuristics and reports the
+exact incompatibility.
+
 Config and env overrides:
 
 ```yaml
@@ -71,6 +85,21 @@ analysis:
 ```bash
 export GUARDIAN_SEMANTIC_MODE=compiler
 ```
+
+`analysis_context.analysis_trust` reports compiler coverage, detector maturity,
+runtime degradation, and limitations separately from findings. The numeric
+`security_score` is retained for compatibility but is explicitly identified as
+a `heuristic_risk_indicator`; it is not a deployment approval.
+
+Structured reports also include `analysis_context.triage_summary`. It groups repeated
+detector/function output, ranks a bounded candidate set, and records how many raw
+findings were omitted from the concise view. JSON, SARIF, and Markdown retain the full
+finding collection.
+
+Reviewed audit labels use `vyper-guard-labels/v2`. A label must include `file`,
+`detector`, `verdict`, `reviewer`, `reviewed_at`, and an evidence URL. Optional
+`finding_id` and `function` fields allow published findings to be reported as
+`known_issue_rediscovered`; unmatched output remains a `new_candidate`.
 
 Command note:
 
@@ -161,6 +190,26 @@ Notes:
 - Directory mode aggregates per-file analysis results; `--project-graph` adds cross-file findings.
 - `--fix` and `--fix-dry-run` are single-file only.
 - Priority triage metadata is currently applied in single-file mode.
+
+For reviewed risk acceptance, baseline v2 requires accountability and can
+expire automatically:
+
+```json
+{
+  "$schema": "vyper-guard-finding-baseline/v2",
+  "acceptances": [
+    {
+      "fingerprint": "finding-sha256",
+      "owner": "security@example.com",
+      "reason": "Reviewed protocol invariant makes this path unreachable.",
+      "expires_at": "2026-12-31T00:00:00Z"
+    }
+  ]
+}
+```
+
+Expired acceptances no longer suppress their finding. Version 1 fingerprint
+baselines remain supported for compatibility.
 
 Project graph config:
 
@@ -291,9 +340,16 @@ vyper-guard analyze contract.vy --severity-threshold HIGH
 # Run specific detectors only
 vyper-guard analyze contract.vy --detectors missing_nonreentrant,unsafe_raw_call
 
+# Lower-noise supported and beta profile
+vyper-guard analyze contract.vy --detectors recommended
+
 # Verbose debug output
 vyper-guard analyze contract.vy --verbose
 ```
+
+Detector maturity is independent of severity. `supported` and `beta` describe
+validation evidence; `experimental` rules remain available through
+`--detectors all` but should be manually triaged before use as CI gates.
 
 ### CI Mode
 
@@ -368,6 +424,11 @@ Risk tiers:
 6. On overwrite, a backup is always created first (`.bak`, then `.bak.N` if needed)
 
 If `--fix-dry-run` is used, steps 4-5 are skipped and no files are modified.
+
+Remediation reports include `validation.structural` and `validation.compiler`
+evidence. A structural or compiler failure blocks writes. When the Vyper
+compiler is unavailable, the report states `unavailable` and the result must be
+treated as unverified.
 
 If `--fix-report <path>` is used, Vyper Guard writes a deterministic remediation JSON artifact
 containing plan totals, eligible/skipped counts, generated fixes, and not-applied fixes.
@@ -540,7 +601,7 @@ Vyper Guard v0.2.0 includes context-aware analysis that suppresses false positiv
 | `timestamp_dependence` | Skips timelocks — deadline/delay variables, large constants (≥3600s) |
 | `send_in_loop` | Skips small constant-bounded loops (`range(3)`, `N_COINS`, etc.) |
 | `integer_overflow` | Only flags `unsafe_add/sub/mul/div` — Vyper has built-in overflow protection |
-| `compiler_version_check` | GHSA-vxmm only flagged when contract uses `DynArray` inside `HashMap` values |
+| `compiler_version_check` | Reviewed advisories are emitted only when both version range and affected language feature match |
 
 These suppression rules reduced false positives from **77% to 0%** when tested against the real **Curve StableSwap** mainnet contract (891 lines, target of the $70M July 2023 exploit).
 

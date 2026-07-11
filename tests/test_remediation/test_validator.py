@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from guardian.remediation.validator import FixValidator
 
 
@@ -127,3 +130,41 @@ class TestFixValidator:
         ]
         warnings = self.validator.validate(lines)
         assert any("malformed decorator" in w for w in warnings)
+
+    def test_decorator_after_def_warns(self) -> None:
+        lines = [
+            "@external",
+            "def foo():",
+            "@nonreentrant",
+            "    pass",
+        ]
+        warnings = self.validator.validate(lines)
+        assert any("must immediately precede a function" in w for w in warnings)
+
+    def test_empty_event_block_warns(self) -> None:
+        warnings = self.validator.validate(["event Broken:", "balances: uint256"])
+        assert any("declaration block has no indented body" in w for w in warnings)
+
+    def test_release_validation_reports_unavailable_compiler(self, monkeypatch) -> None:
+        monkeypatch.setattr("guardian.remediation.validator.shutil.which", lambda _: None)
+        result = self.validator.validate_for_release(
+            ["# pragma version ^0.4.0"], source_path=Path("contract.vy")
+        )
+        assert result["ok"] is True
+        assert result["structural"]["status"] == "passed"
+        assert result["compiler"]["status"] == "unavailable"
+
+    def test_release_validation_fails_on_compiler_error(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr(
+            "guardian.remediation.validator.shutil.which", lambda _: "/usr/bin/vyper"
+        )
+        monkeypatch.setattr(
+            "guardian.remediation.validator.subprocess.run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "bad syntax"),
+        )
+        result = self.validator.validate_for_release(
+            ["broken"], source_path=tmp_path / "contract.vy"
+        )
+        assert result["ok"] is False
+        assert result["compiler"]["status"] == "failed"
+        assert result["compiler"]["stderr"] == "bad syntax"

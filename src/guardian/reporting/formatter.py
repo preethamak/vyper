@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 from guardian import __version__
-from guardian.models import AnalysisReport, Severity
+from guardian.models import AnalysisReport, DetectorResult, Severity
 
 _SEVERITY_STYLES: dict[Severity, str] = {
     Severity.CRITICAL: "bold white on red",
@@ -101,6 +101,7 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     con.print()
 
     # ── Findings table ───────────────────────────────────────────
+    display_findings = _auditor_findings(report)
     table = Table(
         show_header=True,
         header_style="bold",
@@ -113,7 +114,7 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     table.add_column("Title", ratio=1)
     table.add_column("Line", width=6, justify="right")
 
-    for finding in report.findings:
+    for finding in display_findings:
         icon = _SEVERITY_ICONS.get(finding.severity, "")
         sev_text = Text(
             f"{icon} {finding.severity.value}",
@@ -123,10 +124,16 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         table.add_row(sev_text, finding.detector_name, finding.title, line_str)
 
     con.print(table)
+    omitted = len(report.findings) - len(display_findings)
+    if omitted:
+        con.print(
+            f"  [dim]Grouped {omitted} repeated/lower-priority finding(s). "
+            "Use JSON, SARIF, or Markdown for the complete evidence set.[/dim]"
+        )
     con.print()
 
     # ── Detailed findings ────────────────────────────────────────
-    for finding in report.findings:
+    for finding in display_findings:
         style = _SEVERITY_STYLES[finding.severity]
         icon = _SEVERITY_ICONS.get(finding.severity, "")
         con.print(f"  {icon} [{style}]{finding.severity.value}[/]  {finding.title}")
@@ -142,6 +149,23 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         con.print()
 
     _print_footer(con, report)
+
+
+def _auditor_findings(report: AnalysisReport, limit: int = 12) -> list[DetectorResult]:
+    if len(report.findings) <= limit:
+        return report.findings
+    selected = []
+    seen: set[tuple[str, str]] = set()
+    for finding in report.findings:
+        function = str(finding.semantic_context.get("function", ""))
+        key = (finding.detector_name, function)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(finding)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _print_triage_section(con: Console, report: AnalysisReport) -> None:

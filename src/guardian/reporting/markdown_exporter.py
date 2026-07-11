@@ -124,6 +124,19 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
     if report.failed_detectors:
         w("## ⚠️ Detector Runtime Failures")
         w("")
+
+    trust = report.analysis_context.get("analysis_trust", {})
+    triage = report.analysis_context.get("triage_summary", {})
+    if isinstance(trust, dict) and isinstance(triage, dict):
+        w("## Analysis Trust and Triage")
+        w("")
+        w(f"- **Trust level:** `{trust.get('level', 'unknown')}`")
+        w(f"- **Semantic engine:** `{report.analysis_context.get('semantic_engine', 'unknown')}`")
+        w(f"- **Raw findings:** {triage.get('raw_findings', len(report.findings))}")
+        w(f"- **Grouped repetitions:** {triage.get('omitted_repetitions', 0)}")
+        for reason in trust.get("degradation_reasons", []):
+            w(f"- **Degraded:** {reason}")
+        w("")
         w(
             "> One or more detectors crashed during analysis. Results may be incomplete and should be "
             "treated as degraded until failures are resolved."
@@ -195,6 +208,8 @@ def export_markdown(report: AnalysisReport, output_path: str | Path | None = Non
             w(f"| **Confidence** | {f.confidence.value} |")
             w(f"| **Category** | {f.vulnerability_type.value} |")
             w(f"| **Detector** | `{f.detector_name}` |")
+            classification = f.audit_classification.get("classification", "new_candidate")
+            w(f"| **Audit Status** | `{classification}` |")
             if f.line_number:
                 loc = str(f.line_number)
                 if f.end_line_number and f.end_line_number != f.line_number:

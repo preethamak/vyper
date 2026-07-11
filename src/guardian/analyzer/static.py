@@ -16,12 +16,20 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from guardian.analyzer.ast_parser import parse_vyper_source
-from guardian.analyzer.compiler_check import check_compiler_version
+from guardian.analyzer.compiler_check import check_compiler_version, collapse_compiler_findings
+from guardian.analyzer.compiler_resolver import discover_compilers
 from guardian.analyzer.confidence import calibrate_confidence
 from guardian.analyzer.exploit_verifier import attach_exploit_verification
 from guardian.analyzer.metrics import compute_contract_complexity
 from guardian.analyzer.semantic import build_semantic_summary, check_vyper_available
-from guardian.analyzer.vyper_detector import ALL_DETECTORS, DETECTOR_MAP, BaseDetector
+from guardian.analyzer.triage import build_triage_summary
+from guardian.analyzer.vyper_detector import (
+    ALL_DETECTORS,
+    DETECTOR_MAP,
+    DETECTOR_MATURITY,
+    RECOMMENDED_DETECTORS,
+    BaseDetector,
+)
 from guardian.models import (
     AnalysisReport,
     Confidence,
@@ -92,13 +100,19 @@ class StaticAnalyzer:
         """Run all detectors against an already-parsed ``ContractInfo``."""
         if contract.semantic_mode != self._semantic_mode:
             contract = contract.model_copy(update={"semantic_mode": self._semantic_mode})
+        semantic_summary = build_semantic_summary(contract)
+        actual_semantic_mode = (
+            "compiler" if semantic_summary.engine.startswith("compiler-") else "source"
+        )
+        if contract.semantic_mode != actual_semantic_mode:
+            contract = contract.model_copy(update={"semantic_mode": actual_semantic_mode})
         all_findings: list[DetectorResult] = []
         detector_names_run: list[str] = []
         failed_detectors: list[str] = []
         detector_errors: dict[str, str] = {}
 
         # 1. Compiler-version check (always runs).
-        version_findings = check_compiler_version(contract)
+        version_findings = collapse_compiler_findings(check_compiler_version(contract))
         all_findings.extend(version_findings)
         detector_names_run.append("compiler_version_check")
 
@@ -150,13 +164,23 @@ class StaticAnalyzer:
         score = _apply_failed_detector_penalty(score, len(failed_detectors))
         grade = SecurityGrade.from_score(score)
         complexity = compute_contract_complexity(contract)
+        trust = _build_trust_context(
+            semantic_summary.engine,
+            detector_names_run,
+            failed_detectors,
+        )
 
-        return AnalysisReport(
+        report = AnalysisReport(
             file_path=contract.file_path,
             vyper_version=contract.pragma_version,
             analysis_context={
                 "semantic_mode": contract.semantic_mode,
+                "semantic_engine": semantic_summary.engine,
+                "semantic_compiler_version": semantic_summary.compiler_version,
+                "semantic_fallback_reason": semantic_summary.fallback_reason,
                 "complexity_metrics": complexity.as_dict(),
+                "score_kind": "heuristic_risk_indicator",
+                "analysis_trust": trust,
             },
             findings=filtered,
             detectors_run=detector_names_run,
@@ -165,6 +189,8 @@ class StaticAnalyzer:
             security_score=score,
             grade=grade,
         )
+        report.analysis_context["triage_summary"] = build_triage_summary(report)
+        return report
 
     # ------------------------------------------------------------------
     # Internal
@@ -180,8 +206,17 @@ class StaticAnalyzer:
         if "all" in enabled:
             return [d for d in ALL_DETECTORS if d.NAME not in disabled_set]
 
+        expanded = list(enabled)
+        if "recommended" in expanded:
+            expanded = [name for name in expanded if name != "recommended"]
+            expanded.extend(RECOMMENDED_DETECTORS)
+
         resolved: list[type[BaseDetector]] = []
-        for name in enabled:
+        seen: set[str] = set()
+        for name in expanded:
+            if name in seen:
+                continue
+            seen.add(name)
             if name in disabled_set:
                 continue
             if name not in DETECTOR_MAP:
@@ -194,9 +229,20 @@ class StaticAnalyzer:
     def _normalize_semantic_mode(mode: str) -> str:
         normalized = mode.strip().lower()
         if normalized == "auto":
-            return "compiler" if check_vyper_available() is not None else "source"
+            return (
+                "compiler"
+                if check_vyper_available() is not None or discover_compilers()
+                else "source"
+            )
         if normalized not in {"source", "compiler"}:
             raise ValueError(f"Unsupported semantic mode: {mode}")
+        if (
+            normalized == "compiler"
+            and check_vyper_available() is None
+            and not discover_compilers()
+        ):
+            log.warning("semantic_mode=compiler requested but vyper is not installed; using source")
+            return "source"
         return normalized
 
 
@@ -246,6 +292,48 @@ def _apply_failed_detector_penalty(score: int, failed_count: int) -> int:
         return score
     penalty = min(_FAILED_DETECTOR_PENALTY_CAP, failed_count * _FAILED_DETECTOR_PENALTY)
     return max(0, score - penalty)
+
+
+def _build_trust_context(
+    semantic_engine: str,
+    detectors_run: list[str],
+    failed_detectors: list[str],
+) -> dict[str, object]:
+    """Describe analysis coverage separately from finding-based risk scoring."""
+    maturity_counts = {"supported": 0, "beta": 0, "experimental": 0}
+    for name in detectors_run:
+        if name == "compiler_version_check":
+            continue
+        maturity = DETECTOR_MATURITY.get(name, "experimental")
+        maturity_counts[maturity] = maturity_counts.get(maturity, 0) + 1
+
+    compiler_backed = semantic_engine.startswith("compiler-")
+    reasons: list[str] = []
+    if not compiler_backed:
+        reasons.append("Compiler AST semantics were unavailable; source heuristics were used.")
+    if failed_detectors:
+        reasons.append(f"{len(failed_detectors)} detector(s) failed at runtime.")
+    if maturity_counts["experimental"]:
+        reasons.append(
+            f"{maturity_counts['experimental']} experimental detector(s) contributed coverage."
+        )
+
+    if compiler_backed and not failed_detectors and maturity_counts["experimental"] == 0:
+        level = "high" if maturity_counts["beta"] == 0 else "medium"
+    else:
+        level = "low"
+
+    return {
+        "level": level,
+        "compiler_backed": compiler_backed,
+        "detector_maturity": maturity_counts,
+        "degradation_reasons": reasons,
+        "limitations": [
+            "A low risk indicator does not prove absence of vulnerabilities.",
+            "Economic invariants and multi-transaction protocol behavior require review.",
+            "Unreviewed detector output is not an independent security label.",
+        ],
+    }
 
 
 def _attach_semantic_context(findings: list[DetectorResult], contract: ContractInfo) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from guardian.cli import app
+from guardian.utils.config import load_config
 
 runner = CliRunner()
 
@@ -35,6 +36,17 @@ def check_time() -> bool:
 def _write_contract(path: Path, source: str) -> Path:
     path.write_text(source, encoding="utf-8")
     return path
+
+
+def test_init_writes_loadable_config() -> None:
+    with runner.isolated_filesystem():
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+
+        config_path = Path(".guardianrc")
+        config = load_config(config_path)
+        assert config.analysis.semantic_mode == "auto"
+        assert config.remediation.max_auto_fix_tier == "C"
 
 
 def test_invalid_severity_threshold_returns_exit_2() -> None:
@@ -353,3 +365,50 @@ def test_analyze_directory_json_includes_baseline_diff_metadata() -> None:
         assert diff["new_count"] == 0
         assert diff["resolved_count"] == 0
         assert diff["unchanged_count"] >= 1
+
+
+def test_baseline_v2_only_suppresses_active_reviewed_acceptances() -> None:
+    with runner.isolated_filesystem():
+        risky = _write_contract(Path("risky.vy"), LOW_FINDING_CONTRACT)
+        first = runner.invoke(app, ["analyze", str(risky), "--format", "json"])
+        fingerprint = json.loads(first.output)["findings"][0]["fingerprint"]
+        baseline = Path("baseline-v2.json")
+        baseline.write_text(
+            json.dumps(
+                {
+                    "$schema": "vyper-guard-finding-baseline/v2",
+                    "acceptances": [
+                        {
+                            "fingerprint": fingerprint,
+                            "reason": "Reviewed timestamp use is informational.",
+                            "owner": "security@example.com",
+                            "expires_at": "2999-01-01T00:00:00Z",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            app,
+            ["analyze", str(risky), "--format", "json", "--baseline-file", str(baseline)],
+        )
+        assert result.exit_code == 0
+        assert json.loads(result.output)["findings"] == []
+
+
+def test_baseline_v2_rejects_unowned_acceptance() -> None:
+    with runner.isolated_filesystem():
+        risky = _write_contract(Path("risky.vy"), LOW_FINDING_CONTRACT)
+        baseline = Path("baseline-v2.json")
+        baseline.write_text(
+            json.dumps(
+                {"acceptances": [{"fingerprint": "abc", "reason": "Reviewed", "expires_at": None}]}
+            ),
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            app,
+            ["analyze", str(risky), "--format", "json", "--baseline-file", str(baseline)],
+        )
+        assert result.exit_code == 2

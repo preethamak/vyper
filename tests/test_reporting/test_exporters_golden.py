@@ -95,7 +95,7 @@ def test_terminal_formatter_matches_golden_contract() -> None:
     print_report(_sample_report(), console=console)
 
     actual = console.export_text().replace(f"v{__version__}", "v<VERSION>")
-    expected = (GOLDEN / "report.cli.txt").read_text(encoding="utf-8")
+    expected = (GOLDEN / "report.cli.txt").read_text(encoding="utf-8") + "\n"
 
     assert actual == expected
 

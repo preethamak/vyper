@@ -48,7 +48,7 @@ Mode: Active implementation (phase-gated)
     - `missing_nonreentrant`
     - `unsafe_raw_call`
   - Migrated storage-sensitive compiler advisory pattern gating to semantic summary (`uses_dynarray_in_mapping`)
-  - Added multiline `HashMap[..., DynArray[...]]` detection coverage for GHSA-vxmm checks
+  - Added feature-gated compiler advisory checks; invalid historical advisory identifiers were removed
   - Refined CEI call/order reasoning to scan interaction→effect windows across full function flow
   - Added CEI regression coverage for mixed multi-interaction ordering
   - Added semantic signal for external calls inside loops (`external_calls_in_loop`)

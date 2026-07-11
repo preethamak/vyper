@@ -146,12 +146,9 @@ class TestCompilerCheck:
 
     def test_old_version_flags_vulnerabilities(self, vulnerable_vault_source: str) -> None:
         contract = parse_vyper_source(vulnerable_vault_source)
-        # vulnerable_vault targets ^0.3.9 which is < 0.4.0
         results = check_compiler_version(contract)
-        # Should have at least the overflow and the nonreentrant-lock advisories
-        assert len(results) >= 1
-        severities = [r.severity.value for r in results]
-        assert "CRITICAL" in severities or "HIGH" in severities
+        # Old versions are not findings unless an advisory's affected feature is present.
+        assert results == []
 
     def test_safe_version_no_findings(self, safe_token_source: str) -> None:
         contract = parse_vyper_source(safe_token_source)
@@ -169,7 +166,7 @@ class TestCompilerCheck:
         assert "pragma" in results[0].title.lower()
 
     def test_flags_known_ghsa_range_for_031(self) -> None:
-        source = "# pragma version 0.3.1\nowner: public(address)"
+        source = "# pragma version 0.3.1\nlarge_array: address[2**64 + 1]"
         contract = parse_vyper_source(source)
         results = check_compiler_version(contract)
         advisories = "\n".join(r.title for r in results)
@@ -236,11 +233,10 @@ class TestPragmaFormats:
         assert not any("missing" in t for t in titles)
 
     def test_compiler_check_works_with_legacy_version(self) -> None:
-        """End-to-end: # @version ^0.3.9 should detect old version vulnerabilities."""
+        """End-to-end: a legacy pragma alone is not evidence of an applicable advisory."""
         source = "# @version ^0.3.9\nowner: address"
         contract = parse_vyper_source(source)
         results = check_compiler_version(contract)
-        # Should flag old-version issues, NOT 'missing pragma'
-        assert len(results) >= 1
+        assert results == []
         titles = [r.title.lower() for r in results]
         assert not any("missing" in t for t in titles)

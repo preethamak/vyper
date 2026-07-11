@@ -21,6 +21,11 @@ class LLMTriageError(RuntimeError):
     """Raised when LLM triage execution fails."""
 
 
+def _redact_secret(text: str, secret: str) -> str:
+    """Remove an API key that requests may include in exception URLs."""
+    return text.replace(secret, "***") if secret else text
+
+
 _SEVERITY_RANK: dict[Severity, int] = {
     Severity.CRITICAL: 5,
     Severity.HIGH: 4,
@@ -273,7 +278,8 @@ def apply_llm_triage(
                 else:
                     response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             except requests.RequestException as exc:
-                last_error = f"network error: {exc.__class__.__name__}: {exc}"
+                detail = _redact_secret(str(exc), api_key)
+                last_error = f"network error: {exc.__class__.__name__}: {detail}"
                 if attempt < 2:
                     import time as _time
 
@@ -294,7 +300,8 @@ def apply_llm_triage(
                         url, headers=headers, json=retry_payload, timeout=timeout
                     )
                 except requests.RequestException as exc:
-                    last_error = f"network error: {exc.__class__.__name__}: {exc}"
+                    detail = _redact_secret(str(exc), api_key)
+                    last_error = f"network error: {exc.__class__.__name__}: {detail}"
                     if attempt < 2:
                         import time as _time
 

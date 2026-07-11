@@ -1,26 +1,26 @@
 {
   "vulnerabilities": [
     {
-      "id": "VYPER-2023-NONREENTRANT",
-      "title": "Malfunctioning @nonreentrant lock (Vyper <0.3.10)",
-      "description": "Incorrect storage slot allocation for @nonreentrant locks allowed reentrancy in certain multi-function scenarios.",
+      "id": "VYPER-2023-LARGE-ARRAY-STORAGE",
+      "title": "Storage underallocation for extremely large arrays",
+      "description": "Floating-point rounding could underallocate storage slots for arrays with extremely large byte sizes.",
       "severity": "HIGH",
-      "affected_versions": "<0.3.10",
-      "cve": "GHSA-5824-2926-9c37",
+      "affected_versions": "<=0.3.7",
+      "cve": "GHSA-6m97-7527-mh74",
       "references": [
-        "https://github.com/vyperlang/vyper/security/advisories/GHSA-5824-2926-9c37"
+        "https://github.com/vyperlang/vyper/security/advisories/GHSA-6m97-7527-mh74"
       ],
-      "remediation": "Upgrade to Vyper >=0.3.10."
+      "remediation": "Upgrade to Vyper >=0.3.8."
     },
     {
-      "id": "VYPER-2023-STORAGE-CORRUPTION",
-      "title": "Storage corruption with dynamic arrays in mappings (Vyper <0.3.8)",
-      "description": "Dynamic arrays used as mapping values could lead to storage corruption due to incorrect offset calculations.",
+      "id": "VYPER-2023-INTERNAL-DEFAULT-ORDER",
+      "title": "Incorrect ordering of internal function default arguments",
+      "description": "Calls to internal functions with multiple default arguments could supply omitted defaults in the wrong order.",
       "severity": "HIGH",
       "affected_versions": "<0.3.8",
-      "cve": "GHSA-vxmm-c4qg-qc4v",
+      "cve": "GHSA-ph9x-4vc9-m39g",
       "references": [
-        "https://github.com/vyperlang/vyper/security/advisories/GHSA-vxmm-c4qg-qc4v"
+        "https://github.com/vyperlang/vyper/security/advisories/GHSA-ph9x-4vc9-m39g"
       ],
       "remediation": "Upgrade to Vyper >=0.3.8."
     }

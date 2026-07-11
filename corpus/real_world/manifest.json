@@ -1,0 +1,72 @@
+{
+  "$schema": "vyper-guard-corpus/v1",
+  "description": "Pinned production contracts used for false-positive calibration. Entries are not claims that the contracts are vulnerability-free.",
+  "entries": [
+    {
+      "id": "curve-stableswap-ng-proxy-admin",
+      "repository": "curvefi/stableswap-ng",
+      "commit": "2abe778f40206a6c0fd108a0a53ad3266cbedeee",
+      "path": "contracts/ProxyAdmin.vy",
+      "source_url": "https://raw.githubusercontent.com/curvefi/stableswap-ng/2abe778f40206a6c0fd108a0a53ad3266cbedeee/contracts/ProxyAdmin.vy",
+      "sha256": "bbd68d0ed68e78fdcfd962d51a7408efa03615861cc18203507fd05b7bb2cdba",
+      "review_state": "sampled_false_positive_calibration",
+      "known_false_positive_detectors": [
+        "missing_nonreentrant",
+        "missing_zero_address_check",
+        "unsafe_raw_call"
+      ]
+    },
+    {
+      "id": "curve-scrvusd-rewards-handler",
+      "repository": "curvefi/scrvusd",
+      "commit": "95a120847c7a2901cea5256ba081494e18ea5315",
+      "path": "contracts/RewardsHandler.vy",
+      "source_url": "https://raw.githubusercontent.com/curvefi/scrvusd/95a120847c7a2901cea5256ba081494e18ea5315/contracts/RewardsHandler.vy",
+      "sha256": "6d794f7b9c94f6d5815c2f97643aafeac338ee9ff73d8f1111faf2303688bd8c",
+      "review_state": "sampled_false_positive_calibration",
+      "known_false_positive_detectors": ["shadowed_state_variable"]
+    },
+    {
+      "id": "curve-scrvusd-twa",
+      "repository": "curvefi/scrvusd",
+      "commit": "95a120847c7a2901cea5256ba081494e18ea5315",
+      "path": "contracts/TWA.vy",
+      "source_url": "https://raw.githubusercontent.com/curvefi/scrvusd/95a120847c7a2901cea5256ba081494e18ea5315/contracts/TWA.vy",
+      "sha256": "508a63a9e9a889a274b3352d4df6b6e7d16bd5e7e9d28f811af17cc016ad34eb",
+      "review_state": "clean_scan_control",
+      "known_false_positive_detectors": []
+    },
+    {
+      "id": "yearn-v3-vault-factory",
+      "repository": "yearn/yearn-vaults-v3",
+      "commit": "5b698f9411e880a8f7d4370ad7a4478b24dc2535",
+      "path": "contracts/VaultFactory.vy",
+      "source_url": "https://raw.githubusercontent.com/yearn/yearn-vaults-v3/5b698f9411e880a8f7d4370ad7a4478b24dc2535/contracts/VaultFactory.vy",
+      "sha256": "6d72ffd66f73446dc190dc051577f4d08bd312b8af68477e135412c6cd80b501",
+      "review_state": "sampled_false_positive_calibration",
+      "known_false_positive_detectors": [
+        "missing_nonreentrant",
+        "missing_zero_address_check",
+        "shadowed_state_variable"
+      ]
+    },
+    {
+      "id": "yearn-v3-vault",
+      "repository": "yearn/yearn-vaults-v3",
+      "commit": "5b698f9411e880a8f7d4370ad7a4478b24dc2535",
+      "path": "contracts/VaultV3.vy",
+      "source_url": "https://raw.githubusercontent.com/yearn/yearn-vaults-v3/5b698f9411e880a8f7d4370ad7a4478b24dc2535/contracts/VaultV3.vy",
+      "sha256": "fc9fa5df859cae8a1276d0467e386500cb63ccbad7eb8399d218f51e9d2af82a",
+      "review_state": "sampled_false_positive_calibration",
+      "known_false_positive_detectors": [
+        "cei_violation",
+        "integer_overflow",
+        "missing_nonreentrant",
+        "missing_return_value",
+        "missing_zero_address_check",
+        "send_in_loop",
+        "shadowed_state_variable"
+      ]
+    }
+  ]
+}

@@ -41,8 +41,12 @@ import re
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from guardian.analyzer.cfg import build_cfg
+from guardian.analyzer.call_analysis import external_call_sites
+from guardian.analyzer.invariant_analysis import subtraction_invariant
+from guardian.analyzer.path_analysis import CallPathEvidence, analyze_function_paths
+from guardian.analyzer.range_analysis import proves_gte
 from guardian.analyzer.semantic import build_semantic_summary
+from guardian.analyzer.timestamp_analysis import classify_timestamp_use
 from guardian.models import (
     Confidence,
     ContractInfo,
@@ -172,6 +176,10 @@ _ACCESS_CONTROL_RE = re.compile(
     r"\bassert\b\s+"
     r"(?:msg\.sender\s*==\s*self\.[A-Za-z_]\w*|self\.[A-Za-z_]\w*\s*==\s*msg\.sender)\b"
 )
+_ROLE_GUARD_RE = re.compile(
+    r"\bself\._enforce_role\s*\("
+    r"|\b(?:access_control\.)?_(?:check|enforce)_role\s*\("
+)
 # Timestamp usage in conditional.
 _TIMESTAMP_COND_RE = re.compile(
     r"\b(?:assert|if|elif|while)\b[^\n#]*\bblock\.timestamp\b"
@@ -247,10 +255,10 @@ class MissingNonreentrantDetector(BaseDetector):
             for f in contract.functions:
                 if f.name == exclude_name:
                     continue
-                sem = semantic.functions.get(f.name)
-                if sem is not None and sem.external_calls > 0:
+                sites = external_call_sites(contract, f)
+                if any(site.callback_capable for site in sites):
                     return True
-                if any(_is_external_call_line(line) for line in f.body_lines):
+                if not sites and any(_is_external_call_line(line) for line in f.body_lines):
                     return True
             return False
 
@@ -287,12 +295,26 @@ class MissingNonreentrantDetector(BaseDetector):
                 continue
 
             body = func.body_text
-            has_external_call = fn_sem.external_calls > 0 or has_external_call_text
+            call_sites = external_call_sites(contract, func)
+            has_external_call = any(site.callback_capable for site in call_sites) or (
+                not call_sites and (fn_sem.external_calls > 0 or has_external_call_text)
+            )
             has_state_write = bool(fn_sem.state_writes) or has_state_write_text
 
             if has_external_call:
+                if not has_state_write:
+                    continue
                 # CRITICAL: external call without reentrancy guard
-                has_access_control = bool(_ACCESS_CONTROL_RE.search(body))
+                has_access_control = bool(
+                    _ACCESS_CONTROL_RE.search(body) or _ROLE_GUARD_RE.search(body)
+                )
+                if has_access_control:
+                    call_before_write = any(
+                        path.mutability not in {"view", "pure"}
+                        for path in analyze_function_paths(func, contract).call_paths
+                    )
+                    if not call_before_write:
+                        continue
                 severity = Severity.MEDIUM if has_access_control else Severity.CRITICAL
                 confidence = Confidence.MEDIUM if has_access_control else Confidence.HIGH
                 desc_suffix = (
@@ -326,7 +348,7 @@ class MissingNonreentrantDetector(BaseDetector):
                 # Can be exploited via cross-function reentrancy
                 # Only skip for strict owner-gated functions (msg.sender == self.owner)
                 # NOT for balance lookups like self.balances[msg.sender]
-                if _STRICT_ACL_RE.search(body):
+                if _STRICT_ACL_RE.search(body) or _ROLE_GUARD_RE.search(body):
                     continue  # owner-only state writes are acceptable
                 if not _contract_has_external_call_surface(func.name):
                     continue
@@ -670,13 +692,17 @@ class TimestampDependenceDetector(BaseDetector):
             for i, line in enumerate(func.body_lines):
                 code_line = _strip_inline_comment(line)
                 if _TIMESTAMP_COND_RE.search(code_line):
+                    context = "\n".join(func.body_lines[max(0, i - 2) : i + 3])
+                    domain = classify_timestamp_use(func.name, code_line, context)
+                    if domain in {"accounting", "protocol_scheduling"}:
+                        continue
                     # Skip if this is a timelock comparison
                     if self._is_timelock_context(code_line):
                         continue
                     abs_line = func.end_line - len(func.body_lines) + 1 + i
                     results.append(
                         self._make_result(
-                            title=f"Timestamp dependence in {func.name}()",
+                            title=f"Timestamp {domain} in {func.name}()",
                             description=(
                                 f"``block.timestamp`` is used in a conditional in "
                                 f"``{func.name}()``. Miners can manipulate the "
@@ -690,6 +716,13 @@ class TimestampDependenceDetector(BaseDetector):
                                 "If precision matters, use block.number instead "
                                 "or accept the ~15 s manipulation window."
                             ),
+                            evidence=[f"timestamp_domain={domain}"],
+                            why_flagged=(
+                                f"Timestamp controls a {domain.replace('_', ' ')} condition."
+                            ),
+                            why_not_suppressed=(
+                                "The use was not classified as routine accounting or scheduling."
+                            ),
                         )
                     )
         return results
@@ -702,6 +735,9 @@ class TimestampDependenceDetector(BaseDetector):
 # Matches Vyper 0.4.0+ unsafe_* operations that intentionally bypass
 # overflow/underflow protection.
 _UNSAFE_MATH_RE = re.compile(r"\b(unsafe_add|unsafe_sub|unsafe_mul|unsafe_div)\s*\(")
+_UNSAFE_SUB_ARGS_RE = re.compile(
+    r"\bunsafe_sub\s*\(\s*(?P<left>[A-Za-z_]\w*)\s*,\s*(?P<right>[A-Za-z_]\w*)\s*\)"
+)
 
 
 class IntegerOverflowDetector(BaseDetector):
@@ -724,6 +760,17 @@ class IntegerOverflowDetector(BaseDetector):
             for i, line in enumerate(func.body_lines):
                 m = _UNSAFE_MATH_RE.search(line)
                 if m:
+                    sub_args = _UNSAFE_SUB_ARGS_RE.search(line)
+                    preceding = "\n".join(func.body_lines[:i])
+                    if sub_args is not None:
+                        left = re.escape(sub_args.group("left"))
+                        right = re.escape(sub_args.group("right"))
+                        guard = re.search(
+                            rf"\bassert\b[^\n#]*\b{left}\b\s*>=\s*\b{right}\b",
+                            preceding,
+                        )
+                        if guard:
+                            continue
                     abs_line = func.end_line - len(func.body_lines) + 1 + i
                     op = m.group(1)
                     results.append(
@@ -966,9 +1013,23 @@ class SendInLoopDetector(BaseDetector):
             if fn_sem is None:
                 continue
 
+            body_start = func.end_line - len(func.body_lines) + 1
+            sites = {site.line: site for site in external_call_sites(contract, func)}
+
+            def callback_capable(
+                index: int,
+                source_line: str,
+                _sites=sites,
+                _body_start: int = body_start,
+            ) -> bool:
+                site = _sites.get(_body_start + index)
+                if site is not None:
+                    return site.callback_capable
+                return _is_external_call_line(source_line)
+
             has_loop_external_call_text = False
             loop_stack_probe: list[int] = []
-            for probe_line in func.body_lines:
+            for probe_index, probe_line in enumerate(func.body_lines):
                 probe_stripped = probe_line.strip()
                 if self._LOOP_START_RE.match(probe_line.lstrip() if probe_stripped else ""):
                     loop_stack_probe.append(len(probe_line) - len(probe_line.lstrip()))
@@ -979,7 +1040,7 @@ class SendInLoopDetector(BaseDetector):
                     and (len(probe_line) - len(probe_line.lstrip()) <= loop_stack_probe[-1])
                 ):
                     loop_stack_probe.pop()
-                if loop_stack_probe and _is_external_call_line(probe_stripped):
+                if loop_stack_probe and callback_capable(probe_index, probe_stripped):
                     has_loop_external_call_text = True
                     break
 
@@ -1002,7 +1063,7 @@ class SendInLoopDetector(BaseDetector):
                     and (len(line) - len(line.lstrip()) <= loop_stack[-1][0])
                 ):
                     loop_stack.pop()
-                if loop_stack and _is_external_call_line(stripped):
+                if loop_stack and callback_capable(i, stripped):
                     # If ALL enclosing loops are small-constant, skip
                     if all(is_small for _, is_small in loop_stack):
                         continue
@@ -1047,7 +1108,7 @@ class UncheckedSubtractionDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.INPUT_VALIDATION
 
     # self.balances[msg.sender] -= amount   or   self.counter -= 1
-    _SUB_RE = re.compile(r"\bself\.(\w+)(?:\[.*?\])*\s*-=\s*(\w+)")
+    _SUB_RE = re.compile(r"\b(self\.(\w+)(?:\[[^\n]+?\])*)\s*-=\s*([A-Za-z_]\w*(?:\.\w+)*)")
     # assert self.balances[msg.sender] >= amount
     _CHECK_TEMPLATE = re.compile(r"\bassert\b.*\bself\.{var}(?:\[.*?\])*\s*>=\s*{rhs}")
 
@@ -1080,21 +1141,18 @@ class UncheckedSubtractionDetector(BaseDetector):
         for func in contract.functions:
             body = func.body_text
             for m in self._SUB_RE.finditer(body):
-                var_name = m.group(1)
-                rhs = m.group(2)
-                # Build a regex to see if there's a matching assert above
-                check_re = re.compile(
-                    rf"\bassert\b.*\bself\.{re.escape(var_name)}"
-                    rf"(?:\[.*?\])*\s*>=\s*{re.escape(rhs)}\b"
-                )
+                lhs = m.group(1)
+                var_name = m.group(2)
+                rhs = m.group(3)
                 # Look only at the body text BEFORE the subtraction
                 preceding = body[: m.start()]
-                if check_re.search(preceding):
+                if proves_gte(preceding, lhs, rhs):
                     continue
                 # Check for indirect guards (related mapping assert or
                 # bounded-fraction derivation)
                 if self._has_indirect_guard(body, var_name, rhs, m.start()):
                     continue
+                invariant = subtraction_invariant(func, lhs, rhs, m.start())
                 # Find the line number
                 line_in_body = body[: m.start()].count("\n")
                 abs_line = func.end_line - len(func.body_lines) + 1 + line_in_body
@@ -1110,11 +1168,30 @@ class UncheckedSubtractionDetector(BaseDetector):
                             f"(on Vyper >=0.4.0) or silently underflow (on older "
                             f"versions)."
                         ),
-                        confidence=Confidence.MEDIUM,
+                        confidence=(Confidence.LOW if invariant else Confidence.MEDIUM),
+                        severity=(Severity.LOW if invariant else self.SEVERITY),
                         line_number=abs_line,
                         source_snippet=_excerpt(contract, func),
                         fix_suggestion=(
                             f"Add ``assert self.{var_name}[…] >= {rhs}`` before the subtraction."
+                        ),
+                        why_flagged=(
+                            invariant.explanation
+                            if invariant
+                            else "No dominating arithmetic bound was proven."
+                        ),
+                        evidence=(
+                            [
+                                f"invariant={invariant.name}",
+                                f"invariant_strength={invariant.strength}",
+                            ]
+                            if invariant
+                            else []
+                        ),
+                        why_not_suppressed=(
+                            "A protocol invariant was inferred but not locally proven."
+                            if invariant and invariant.strength == "protocol_assumption"
+                            else None
                         ),
                     )
                 )
@@ -1183,9 +1260,14 @@ class CEIViolationDetector(BaseDetector):
             # the classic false positive where the state write is in an else-
             # branch that cannot be reached after the external call.
             # ---------------------------------------------------------------
+            path_evidence: tuple[CallPathEvidence, ...]
             try:
-                cfg = build_cfg(func)
-                if not cfg.state_write_after_external_call_in_same_path():
+                path_evidence = tuple(
+                    path
+                    for path in analyze_function_paths(func, contract).call_paths
+                    if path.mutability not in {"view", "pure"}
+                )
+                if not path_evidence:
                     continue
             except Exception:
                 # CFG build failed — fall back to line-order check
@@ -1225,12 +1307,18 @@ class CEIViolationDetector(BaseDetector):
             # CFG confirmed a reachable CEI violation path.
             # Generate one finding per violating external-call site so that
             # functions with multiple violating calls get multiple findings.
-            violations = self._cei_violations(func.body_lines)
-            if not violations:
-                violations = [(0, "external call")]
-            is_guarded = func.is_nonreentrant
-            for call_idx, call_snippet in violations:
-                call_abs_line = func.end_line - len(func.body_lines) + 1 + call_idx
+            body_start = func.end_line - len(func.body_lines) + 1
+            for path in path_evidence:
+                call_idx = path.call_line - body_start
+                call_snippet = (
+                    func.body_lines[call_idx].strip()
+                    if 0 <= call_idx < len(func.body_lines)
+                    else "external call"
+                )
+                is_guarded = func.is_nonreentrant or path.access_controlled
+                callback_feasible = path.callback_feasibility == "attacker_controlled"
+                state_dependent = bool(path.state_dependencies)
+                high_confidence = callback_feasible and state_dependent and not is_guarded
                 results.append(
                     self._make_result(
                         title=f"CEI violation in {func.name}()",
@@ -1238,7 +1326,10 @@ class CEIViolationDetector(BaseDetector):
                             f"``{func.name}()`` performs an external call "
                             f"(``{call_snippet.split('(')[0].strip() if call_snippet else 'external call'}``) "
                             f"**before** updating state on a reachable execution path. "
-                            f"An attacker can re-enter before state is committed. "
+                            f"Callback feasibility is ``{path.callback_feasibility}``; "
+                            f"target trust is ``{path.target_trust}``; "
+                            f"state dependencies are "
+                            f"``{', '.join(path.state_dependencies) or 'not established'}``. "
                             f"Move all state changes above the external call "
                             f"(Checks → Effects → Interactions)."
                             + (
@@ -1248,15 +1339,30 @@ class CEIViolationDetector(BaseDetector):
                                 else ""
                             )
                         ),
-                        confidence=Confidence.MEDIUM if is_guarded else Confidence.HIGH,
+                        confidence=(Confidence.HIGH if high_confidence else Confidence.MEDIUM),
                         severity=Severity.LOW if is_guarded else self.SEVERITY,
-                        line_number=call_abs_line,
+                        line_number=path.call_line,
                         source_snippet=_excerpt(contract, func),
                         fix_suggestion=(
                             "Reorder the function: perform all state updates "
                             "(self.x = …) BEFORE any external calls "
                             "(send / raw_call / interface calls). This is the "
                             "Checks-Effects-Interactions pattern."
+                        ),
+                        why_flagged=(
+                            "A reachable path performs an external call before state mutation."
+                        ),
+                        evidence=[
+                            f"call_line={path.call_line}",
+                            f"reachable_write_lines={','.join(map(str, path.write_lines))}",
+                            f"callback_feasibility={path.callback_feasibility}",
+                            f"call_mutability={path.mutability}",
+                            f"target_trust={path.target_trust}",
+                            f"access_controlled={path.access_controlled}",
+                            "state_dependencies=" + ",".join(path.state_dependencies),
+                        ],
+                        why_not_suppressed=(
+                            "The call and later state write occur on the same reachable path."
                         ),
                     )
                 )
@@ -1272,6 +1378,14 @@ _TX_ORIGIN_AUTH_RE = re.compile(
     r"\b(?:assert|if|elif)\b[^\n#]*\btx\.origin\b"
     r"|\btx\.origin\s*=="
     r"|==\s*tx\.origin\b",
+)
+_EOA_RESTRICTION_RE = re.compile(
+    r"\b(?:assert|if|elif)\b[^\n#]*"
+    r"(?:tx\.origin\s*==\s*msg\.sender|msg\.sender\s*==\s*tx\.origin)"
+)
+_ORIGIN_CALLER_COMPARE_RE = re.compile(
+    r"\b(?:assert|if|elif)\b[^\n#]*"
+    r"(?:\w+\s*[!=]=\s*tx\.origin|tx\.origin\s*[!=]=\s*\w+)"
 )
 
 
@@ -1292,22 +1406,41 @@ class TxOriginAuthDetector(BaseDetector):
                 code = _strip_inline_comment(line)
                 if _TX_ORIGIN_AUTH_RE.search(code):
                     abs_line = func.end_line - len(func.body_lines) + 1 + i
+                    eoa_restriction = bool(
+                        _EOA_RESTRICTION_RE.search(code) or _ORIGIN_CALLER_COMPARE_RE.search(code)
+                    )
+                    if eoa_restriction:
+                        title = f"tx.origin restricts contract callers in {func.name}()"
+                        description = (
+                            f"``{func.name}()`` compares a caller with ``tx.origin`` to restrict "
+                            "contract-mediated calls. This is not owner authentication, but it "
+                            "breaks smart wallets and composability and can be bypassed during "
+                            "construction on some EVM patterns. Confirm that EOA-only access is "
+                            "an explicit protocol requirement."
+                        )
+                        severity = Severity.LOW
+                        fix = (
+                            "Use an explicit smart-wallet allowlist or signature policy when "
+                            "contract caller restrictions are required."
+                        )
+                    else:
+                        title = f"tx.origin used for auth in {func.name}()"
+                        description = (
+                            f"``{func.name}()`` uses ``tx.origin`` for access control. "
+                            "A malicious intermediary can preserve the victim's origin. "
+                            "Use ``msg.sender`` for caller authentication."
+                        )
+                        severity = self.SEVERITY
+                        fix = "Replace ``tx.origin`` with ``msg.sender`` in access-control checks."
                     results.append(
                         self._make_result(
-                            title=f"tx.origin used for auth in {func.name}()",
-                            description=(
-                                f"``{func.name}()`` uses ``tx.origin`` for access "
-                                f"control. A malicious contract can spoof "
-                                f"``tx.origin`` in a delegated call chain. "
-                                f"Use ``msg.sender`` instead."
-                            ),
+                            title=title,
+                            description=description,
                             confidence=Confidence.HIGH,
+                            severity=severity,
                             line_number=abs_line,
                             source_snippet=line.strip(),
-                            fix_suggestion=(
-                                "Replace ``tx.origin`` with ``msg.sender`` in "
-                                "all access-control assertions."
-                            ),
+                            fix_suggestion=fix,
                         )
                     )
         return results
@@ -1348,11 +1481,21 @@ class MissingZeroAddressCheckDetector(BaseDetector):
         for func in contract.functions:
             if func.name in _CONSTRUCTOR_NAMES or "deploy" in func.decorators:
                 continue
+            parameter_names = {
+                parameter.strip().split(":", 1)[0].strip()
+                for parameter in func.args.split(",")
+                if parameter.strip()
+            }
             body = func.body_text
             for m in _ADDR_STATE_WRITE_RE.finditer(body):
                 var_name = m.group(1)
                 rhs = m.group(2)
                 if var_name not in addr_vars:
+                    continue
+                # Only validate direct address inputs. State-to-state copies,
+                # msg.sender assignments, and intentional clearing are not
+                # missing input validation.
+                if rhs not in parameter_names:
                     continue
                 preceding = body[: m.start()]
                 check_re = re.compile(
@@ -1420,7 +1563,7 @@ class WeakRandomnessDetector(BaseDetector):
                     continue
                 ctx_lines = func.body_lines[max(0, i - 2) : i + 3]
                 ctx = "\n".join(ctx_lines)
-                if not _RANDOM_CONTEXT_RE.search(ctx) and "=" not in code:
+                if not _RANDOM_CONTEXT_RE.search(ctx):
                     continue
                 abs_line = func.end_line - len(func.body_lines) + 1 + i
                 results.append(
@@ -1510,7 +1653,8 @@ class ShadowedStateVariableDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.CODE_QUALITY
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
-        state_names = {v.name for v in contract.state_variables}
+        state_variables = {v.name: v for v in contract.state_variables}
+        state_names = set(state_variables)
         if not state_names:
             return []
         results: list[DetectorResult] = []
@@ -1529,6 +1673,12 @@ class ShadowedStateVariableDetector(BaseDetector):
                     continue
                 var = m.group(1)
                 if var in param_names or var.startswith("self"):
+                    continue
+                if (
+                    var in state_variables
+                    and state_variables[var].is_immutable
+                    and (func.name in _CONSTRUCTOR_NAMES or "deploy" in func.decorators)
+                ):
                     continue
                 if var in state_names and var not in seen_in_func:
                     seen_in_func.add(var)
@@ -1667,7 +1817,27 @@ class UnsafeAssemblyDetector(BaseDetector):
 # ---------------------------------------------------------------------------
 
 
-_IFACE_CALL_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]*\s*\([^()\n]*\)\s*\.\s*[a-z_]\w*\s*\([^)\n]*\)")
+_IFACE_CALL_RE = re.compile(
+    r"(?P<interface>[A-Z][A-Za-z0-9_]*)\s*\([^()\n]*\)\s*\.\s*"
+    r"(?P<method>[a-z_]\w*)\s*\([^)\n]*\)"
+)
+
+
+def _returning_interface_methods(contract: ContractInfo) -> set[tuple[str, str]]:
+    """Extract source-declared interface methods with explicit return types."""
+    returning: set[tuple[str, str]] = set()
+    current_interface: str | None = None
+    for line in contract.lines:
+        if line and not line[0].isspace():
+            match = re.match(r"interface\s+(\w+)\s*:", line.strip())
+            current_interface = match.group(1) if match else None
+            continue
+        if current_interface is None:
+            continue
+        method = re.match(r"\s+def\s+(\w+)\s*\(.*\)\s*->\s*[^:]+:", line)
+        if method:
+            returning.add((current_interface, method.group(1)))
+    return returning
 
 
 class MissingReturnValueDetector(BaseDetector):
@@ -1682,14 +1852,14 @@ class MissingReturnValueDetector(BaseDetector):
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         results: list[DetectorResult] = []
+        returning_methods = _returning_interface_methods(contract)
         for func in contract.functions:
             for i, line in enumerate(func.body_lines):
                 code = _strip_inline_comment(line).strip()
-                if not _IFACE_CALL_RE.search(code):
+                match = _IFACE_CALL_RE.fullmatch(code)
+                if match is None:
                     continue
-                if re.match(r"^\w+\s*(?::\s*[^=]+)?\s*=", code):
-                    continue
-                if code.startswith("assert") or code.startswith("log "):
+                if (match.group("interface"), match.group("method")) not in returning_methods:
                     continue
                 abs_line = func.end_line - len(func.body_lines) + 1 + i
                 results.append(
@@ -1848,6 +2018,20 @@ ALL_DETECTORS: list[type[BaseDetector]] = [
 
 DETECTOR_MAP: dict[str, type[BaseDetector]] = {cls.NAME: cls for cls in ALL_DETECTORS}
 
+# Maturity is intentionally independent from severity. A CRITICAL rule may
+# still be experimental until it has enough labeled production evidence.
+DETECTOR_MATURITY: dict[str, str] = {
+    "tx_origin_auth": "supported",
+    "unprotected_selfdestruct": "beta",
+    "weak_randomness": "beta",
+    "unsafe_assembly": "beta",
+}
+RECOMMENDED_DETECTORS: tuple[str, ...] = tuple(
+    cls.NAME
+    for cls in ALL_DETECTORS
+    if DETECTOR_MATURITY.get(cls.NAME, "experimental") in {"supported", "beta"}
+)
+
 
 def get_detector(name: str) -> type[BaseDetector]:
     """Look up a detector class by its ``NAME``.
@@ -1866,6 +2050,7 @@ def list_detectors() -> list[dict[str, str]]:
             "severity": cls.SEVERITY.value,
             "vulnerability_type": cls.VULNERABILITY_TYPE.value,
             "description": cls.DESCRIPTION,
+            "maturity": DETECTOR_MATURITY.get(cls.NAME, "experimental"),
         }
         for cls in ALL_DETECTORS
     ]

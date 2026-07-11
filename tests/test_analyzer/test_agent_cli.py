@@ -219,3 +219,31 @@ def test_agent_memory_retention_is_bounded() -> None:
         assert len(tail) == 2
         assert tail[0]["prompt"] == "b"
         assert tail[1]["prompt"] == "c"
+
+
+def test_agent_transport_error_redacts_api_key(monkeypatch) -> None:
+    import requests
+
+    from guardian.agents.adk import AgentError, SecurityAgent
+
+    secret = "test-secret-api-key"
+
+    def _fail_post(*args, **kwargs):
+        raise requests.ConnectionError(f"failed URL ?key={secret}")
+
+    monkeypatch.setattr("guardian.agents.adk.requests.post", _fail_post)
+    agent = SecurityAgent(
+        api_key=secret,
+        model="gemini-test",
+        provider="gemini",
+        base_url="https://example.invalid/v1beta",
+        max_retries=0,
+    )
+
+    try:
+        agent.ask("review")
+    except AgentError as exc:
+        assert secret not in str(exc)
+        assert "***" in str(exc)
+    else:
+        raise AssertionError("Expected AgentError")

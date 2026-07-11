@@ -6,6 +6,7 @@ from guardian.analyzer.ast_parser import parse_vyper_source
 from guardian.analyzer.compiler_check import check_compiler_version
 from guardian.analyzer.static import StaticAnalyzer
 from guardian.analyzer.vyper_detector import (
+    RECOMMENDED_DETECTORS,
     CEIViolationDetector,
     DangerousDelegatecallDetector,
     IncorrectERC20ReturnDetector,
@@ -13,6 +14,7 @@ from guardian.analyzer.vyper_detector import (
     MissingEventEmissionDetector,
     MissingInputValidationDetector,
     MissingNonreentrantDetector,
+    MissingReturnValueDetector,
     MissingZeroAddressCheckDetector,
     SendInLoopDetector,
     ShadowedStateVariableDetector,
@@ -24,6 +26,7 @@ from guardian.analyzer.vyper_detector import (
     UnprotectedStateChangeDetector,
     UnsafeRawCallDetector,
     WeakRandomnessDetector,
+    list_detectors,
 )
 from guardian.models import Severity
 
@@ -48,9 +51,12 @@ class TestMissingNonreentrant:
         source = """\
 # pragma version ^0.4.0
 
+balance: uint256
+
 @external
 def withdraw():
     send(msg.sender, 100)
+    self.balance = 0
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
@@ -85,9 +91,12 @@ def get_value() -> uint256:
         source = """\
 # pragma version ^0.4.0
 
+nonce: uint256
+
 @external
 def execute(target: address, data: Bytes[1024]):
     raw_call(target, data)
+    self.nonce += 1
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
@@ -116,10 +125,12 @@ interface IERC20:
     def transfer(to: address, amount: uint256) -> bool: nonpayable
 
 token: public(address)
+last_payout: uint256
 
 @external
 def payout(to: address, amount: uint256):
     IERC20(self.token).transfer(to, amount)
+    self.last_payout = amount
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
@@ -136,6 +147,17 @@ def set_count(v: uint256):
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 0
+
+    def test_external_call_without_state_mutation_is_not_reentrancy(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def forward(target: address, data: Bytes[1024]):
+    raw_call(target, data)
+"""
+        results = _run_detector(MissingNonreentrantDetector, source)
+        assert results == []
 
 
 # -------------------------------------------------------------------------
@@ -396,6 +418,7 @@ class TestUnprotectedSelfdestruct:
 # pragma version ^0.4.0
 
 owner: address
+fees: uint256
 
 @external
 def destroy():
@@ -706,30 +729,45 @@ def fast(a: uint256) -> uint256:
 
     def test_compiler_check_snippet_uses_real_pragma(self) -> None:
         source = """\
-# @version ^0.3.9
+# @version 0.2.14
+
+@external
+@nonreentrant("lock")
+def guarded():
+    pass
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
         assert len(results) >= 1
-        assert "# @version ^0.3.9" in results[0].source_snippet
+        assert "# @version 0.2.14" in results[0].source_snippet
 
     def test_compiler_check_flags_historical_lock_regression_versions(self) -> None:
         source = """\
-# @version 0.2.15
+# @version 0.2.14
+
+@external
+@nonreentrant("lock")
+def guarded():
+    pass
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
-        assert any("historical lock regression" in r.title.lower() for r in results)
+        assert any("GHSA-7f92-rr6w-cq64" in r.title for r in results)
 
     def test_compiler_check_uses_real_pragma_not_unrelated_comment(self) -> None:
         source = """\
 # random note mentioning 0.3.9 but not a pragma
-# @version ^0.3.9
+# @version 0.2.14
+
+@external
+@nonreentrant("lock")
+def guarded():
+    pass
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
         assert len(results) >= 1
-        assert results[0].source_snippet == "# @version ^0.3.9"
+        assert results[0].source_snippet == "# @version 0.2.14"
 
 
 # -------------------------------------------------------------------------
@@ -1437,6 +1475,7 @@ owner: address
 def withdraw_admin_fees():
     assert msg.sender == self.owner
     send(msg.sender, 100)
+    self.fees = 0
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
@@ -1447,19 +1486,20 @@ def withdraw_admin_fees():
         source = """\
 # pragma version ^0.4.0
 
+balance: uint256
+
 @external
 def withdraw():
     send(msg.sender, 100)
+    self.balance = 0
 """
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 1
         assert results[0].severity == Severity.CRITICAL
 
-    # --- Compiler check: GHSA-vxmm pattern check ---
+    # --- Compiler check: advisory feature gates ---
 
-    def test_ghsa_vxmm_suppressed_without_dynarray_in_map(self) -> None:
-        """GHSA-vxmm should NOT be flagged if contract doesn't use
-        DynArray as HashMap values."""
+    def test_compiler_advisories_suppressed_without_affected_features(self) -> None:
         source = """\
 # @version ^0.2.8
 
@@ -1468,37 +1508,45 @@ coins: address[2]
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
-        # Should still flag GHSA-5824 (reentrancy guard) but NOT GHSA-vxmm
+        # Neither feature-specific advisory applies without the affected constructs.
         advisory_ids = [r.title for r in results]
-        assert any("GHSA-5824" in t for t in advisory_ids)
-        assert not any("GHSA-vxmm" in t for t in advisory_ids)
+        assert advisory_ids == []
 
-    def test_ghsa_vxmm_flagged_with_dynarray_in_map(self) -> None:
-        """GHSA-vxmm SHOULD be flagged if contract uses DynArray in HashMap."""
+    def test_ghsa_7f92_flagged_when_nonreentrant_is_used(self) -> None:
+        source = """\
+# @version 0.2.14
+
+@external
+@nonreentrant("lock")
+def withdraw():
+    pass
+"""
+        results = check_compiler_version(parse_vyper_source(source, "<test>"))
+        assert any("GHSA-7f92-rr6w-cq64" in result.title for result in results)
+
+    def test_large_array_storage_advisory_is_feature_gated(self) -> None:
         source = """\
 # @version ^0.3.7
 
-user_tokens: HashMap[address, DynArray[uint256, 100]]
+large_array: address[2**64 + 1]
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
         advisory_ids = [r.title for r in results]
-        assert any("GHSA-vxmm" in t for t in advisory_ids)
+        assert any("GHSA-6m97-7527-mh74" in t for t in advisory_ids)
 
-    def test_ghsa_vxmm_flagged_with_multiline_dynarray_in_map(self) -> None:
-        """GHSA-vxmm SHOULD be flagged for multiline HashMap[..., DynArray[...]] too."""
+    def test_internal_defaults_advisory_is_feature_gated(self) -> None:
         source = """\
 # @version ^0.3.7
 
-user_tokens: HashMap[
-    address,
-    DynArray[uint256, 100]
-]
+@internal
+def helper(a: uint256 = 1, b: uint256 = 2):
+    pass
 """
         contract = parse_vyper_source(source, "<test>")
         results = check_compiler_version(contract)
         advisory_ids = [r.title for r in results]
-        assert any("GHSA-vxmm" in t for t in advisory_ids)
+        assert any("GHSA-ph9x-4vc9-m39g" in t for t in advisory_ids)
 
 
 class TestV05DetectorSet:
@@ -1529,6 +1577,19 @@ def remember():
         results = _run_detector(TxOriginAuthDetector, source)
         assert len(results) == 0
 
+    def test_tx_origin_eoa_gate_is_low_severity_composability_warning(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def only_eoa():
+    assert msg.sender == tx.origin
+"""
+        results = _run_detector(TxOriginAuthDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.LOW
+        assert "restricts contract callers" in results[0].title
+
     def test_missing_zero_address_check_flags_address_assignment(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -1557,6 +1618,19 @@ def set_owner(new_owner: address):
         results = _run_detector(MissingZeroAddressCheckDetector, source)
         assert len(results) == 0
 
+    def test_zero_address_state_clear_is_not_input_validation(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+pending_owner: public(address)
+
+@external
+def clear_pending_owner():
+    self.pending_owner = empty(address)
+"""
+        results = _run_detector(MissingZeroAddressCheckDetector, source)
+        assert results == []
+
     def test_weak_randomness_flags_random_seed(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -1570,6 +1644,18 @@ def roll() -> uint256:
         assert len(results) == 1
         assert results[0].detector_name == "weak_randomness"
 
+    def test_block_number_accounting_is_not_randomness(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+last_block: uint256
+
+@external
+def checkpoint():
+    self.last_block = block.number
+"""
+        assert _run_detector(WeakRandomnessDetector, source) == []
+
     def test_shadowed_state_variable_flags_local_shadow(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -1582,6 +1668,55 @@ def update():
 """
         results = _run_detector(ShadowedStateVariableDetector, source)
         assert len(results) == 1
+
+    def test_immutable_initialization_is_not_shadowing(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+vault: immutable(address)
+
+@deploy
+def __init__(_vault: address):
+    vault = _vault
+"""
+        results = _run_detector(ShadowedStateVariableDetector, source)
+        assert results == []
+
+    def test_missing_return_only_flags_standalone_returning_call(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IToken:
+    def balanceOf(owner: address) -> uint256: view
+    def notify(owner: address): nonpayable
+
+token: address
+
+@external
+def check():
+    IToken(self.token).balanceOf(msg.sender)
+    IToken(self.token).notify(msg.sender)
+"""
+        results = _run_detector(MissingReturnValueDetector, source)
+        assert len(results) == 1
+        assert "balanceOf" in (results[0].source_snippet or "")
+
+    def test_consumed_interface_return_is_not_flagged(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface IToken:
+    def balanceOf(owner: address) -> uint256: view
+
+token: address
+
+@external
+@view
+def balance() -> uint256:
+    return IToken(self.token).balanceOf(msg.sender)
+"""
+        results = _run_detector(MissingReturnValueDetector, source)
+        assert results == []
 
     def test_missing_input_validation_flags_amount_arg(self) -> None:
         source = """\
@@ -1641,3 +1776,14 @@ def payout(to: address, amount: uint256):
 """
         results = _run_detector(IncorrectERC20ReturnDetector, source)
         assert len(results) == 0
+
+
+def test_detector_catalog_exposes_maturity() -> None:
+    catalog = list_detectors()
+    assert catalog
+    assert {item["maturity"] for item in catalog} == {"supported", "beta", "experimental"}
+
+
+def test_recommended_profile_only_runs_supported_and_beta_rules() -> None:
+    analyzer = StaticAnalyzer(enabled_detectors=["recommended"])
+    assert [detector.NAME for detector in analyzer._detectors] == list(RECOMMENDED_DETECTORS)

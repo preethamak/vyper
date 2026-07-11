@@ -1,0 +1,63 @@
+name: Vyper Guard Scan
+description: Run Vyper Guard and produce a SARIF report for GitHub code scanning.
+inputs:
+  target:
+    description: Vyper file or project directory to scan.
+    default: .
+  version:
+    description: Use source, or provide a published vyper-guard package version.
+    default: source
+  detectors:
+    description: Detector profile or comma-separated detector names.
+    default: recommended
+  severity:
+    description: Minimum reported severity.
+    default: LOW
+  baseline-file:
+    description: Optional repository-relative finding baseline.
+    default: ""
+  output:
+    description: SARIF output path.
+    default: vyper-guard.sarif
+  fail-on-findings:
+    description: Exit non-zero when findings meet the threshold.
+    default: "false"
+outputs:
+  sarif:
+    description: Generated SARIF path.
+    value: ${{ steps.scan.outputs.sarif }}
+runs:
+  using: composite
+  steps:
+    - name: Install Vyper Guard
+      shell: bash
+      env:
+        VYPER_GUARD_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [[ "$VYPER_GUARD_VERSION" == "source" ]]; then
+          python -m pip install "$GITHUB_ACTION_PATH/../../.."
+        else
+          python -m pip install "vyper-guard==${VYPER_GUARD_VERSION}"
+        fi
+    - name: Scan Vyper contracts
+      id: scan
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        DETECTORS: ${{ inputs.detectors }}
+        SEVERITY: ${{ inputs.severity }}
+        BASELINE_FILE: ${{ inputs.baseline-file }}
+        OUTPUT: ${{ inputs.output }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+      run: |
+        set -euo pipefail
+        args=(analyze "$TARGET" --format sarif --output "$OUTPUT" --detectors "$DETECTORS" --severity-threshold "$SEVERITY")
+        if [[ -n "$BASELINE_FILE" ]]; then
+          args+=(--baseline-file "$BASELINE_FILE" --baseline-diff)
+        fi
+        if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
+          args+=(--ci)
+        fi
+        vyper-guard "${args[@]}"
+        echo "sarif=$OUTPUT" >> "$GITHUB_OUTPUT"

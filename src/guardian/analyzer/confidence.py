@@ -56,6 +56,19 @@ def _base_from_evidence(finding: DetectorResult) -> Confidence:
 def calibrate_confidence(findings: list[DetectorResult]) -> list[DetectorResult]:
     """Apply deterministic confidence calibration to findings."""
     for finding in findings:
+        if "invariant_strength=protocol_assumption" in finding.evidence:
+            finding.confidence = Confidence.LOW
+            continue
+        if finding.detector_name == "cei_violation" and any(
+            evidence
+            in {
+                "target_trust=fixed",
+                "target_trust=governance_configured",
+            }
+            for evidence in finding.evidence
+        ):
+            finding.confidence = Confidence.MEDIUM
+            continue
         # Compiler checker: version advisories are high-confidence; missing/unparseable pragma is low.
         if finding.detector_name == "compiler_version_check":
             if finding.severity in {Severity.HIGH, Severity.CRITICAL}:

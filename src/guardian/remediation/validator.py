@@ -11,6 +11,11 @@ checks:
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
 
 
 class FixValidator:
@@ -23,7 +28,89 @@ class FixValidator:
         warnings.extend(self._check_defs(lines))
         warnings.extend(self._check_indentation(lines))
         warnings.extend(self._check_decorators(lines))
+        warnings.extend(self._check_named_blocks(lines))
         return warnings
+
+    def validate_for_release(
+        self,
+        lines: list[str],
+        *,
+        source_path: Path,
+        timeout_seconds: int = 30,
+    ) -> dict[str, Any]:
+        """Return structural and compiler-backed validation evidence."""
+        structural_warnings = self.validate(lines)
+        compiler = self._compile(lines, source_path=source_path, timeout_seconds=timeout_seconds)
+        return {
+            "ok": not structural_warnings and compiler["status"] != "failed",
+            "structural": {
+                "status": "passed" if not structural_warnings else "failed",
+                "warnings": structural_warnings,
+            },
+            "compiler": compiler,
+        }
+
+    @staticmethod
+    def _compile(
+        lines: list[str],
+        *,
+        source_path: Path,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        executable = shutil.which("vyper")
+        if executable is None:
+            return {
+                "status": "unavailable",
+                "command": None,
+                "exit_code": None,
+                "stderr": "Vyper compiler is not installed.",
+            }
+
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".vy",
+                prefix=f".{source_path.stem}.vyper-guard-",
+                dir=source_path.parent,
+                delete=False,
+            ) as handle:
+                handle.write("\n".join(lines) + "\n")
+                temp_path = Path(handle.name)
+
+            command = [executable, "-f", "ast", str(temp_path)]
+            completed = subprocess.run(
+                command,
+                cwd=source_path.parent,
+                capture_output=True,
+                text=True,
+                timeout=max(1, timeout_seconds),
+                check=False,
+            )
+            return {
+                "status": "passed" if completed.returncode == 0 else "failed",
+                "command": [executable, "-f", "ast", source_path.name],
+                "exit_code": completed.returncode,
+                "stderr": completed.stderr[-4000:],
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "failed",
+                "command": [executable, "-f", "ast", source_path.name],
+                "exit_code": None,
+                "stderr": f"Compiler validation timed out after {timeout_seconds} seconds.",
+            }
+        except OSError as exc:
+            return {
+                "status": "failed",
+                "command": [executable, "-f", "ast", source_path.name],
+                "exit_code": None,
+                "stderr": str(exc),
+            }
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     @staticmethod
     def _check_brackets(lines: list[str]) -> list[str]:
@@ -96,7 +183,7 @@ class FixValidator:
 
     @staticmethod
     def _check_decorators(lines: list[str]) -> list[str]:
-        """Flag obviously malformed decorator syntax."""
+        """Flag malformed decorators and decorators not attached to a function."""
         warnings: list[str] = []
         decorator_re = re.compile(r"^@[A-Za-z_]\w*(?:\(.*\))?$")
         for i, line in enumerate(lines, 1):
@@ -105,4 +192,25 @@ class FixValidator:
                 continue
             if not decorator_re.match(stripped):
                 warnings.append(f"Line {i}: malformed decorator syntax '{stripped}'.")
+                continue
+
+            next_code = next(
+                (candidate.strip() for candidate in lines[i:] if candidate.strip()),
+                "",
+            )
+            if not (next_code.startswith("@") or next_code.startswith("def ")):
+                warnings.append(f"Line {i}: decorator must immediately precede a function.")
+        return warnings
+
+    @staticmethod
+    def _check_named_blocks(lines: list[str]) -> list[str]:
+        """Require declarations such as events to contain an indented body."""
+        warnings: list[str] = []
+        block_re = re.compile(r"^(event|struct|interface|flag)\s+\w+.*:$")
+        for i, line in enumerate(lines):
+            if not block_re.match(line.strip()):
+                continue
+            next_line = next((candidate for candidate in lines[i + 1 :] if candidate.strip()), "")
+            if next_line and not next_line.startswith((" ", "\t")):
+                warnings.append(f"Line {i + 1}: declaration block has no indented body.")
         return warnings

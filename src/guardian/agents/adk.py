@@ -18,6 +18,11 @@ class AgentError(RuntimeError):
     """Raised when agent execution fails."""
 
 
+def _redact_secret(text: str, secret: str) -> str:
+    """Remove an API key that requests may include in exception URLs."""
+    return text.replace(secret, "***") if secret else text
+
+
 class AgentMemory:
     """Simple append-only JSONL memory store."""
 
@@ -193,7 +198,8 @@ class SecurityAgent:
                             timeout=self.timeout,
                         )
                 except requests.RequestException as exc:
-                    last_error = f"network error: {exc.__class__.__name__}: {exc}"
+                    detail = _redact_secret(str(exc), self.api_key)
+                    last_error = f"network error: {exc.__class__.__name__}: {detail}"
                     if attempt < self.max_retries:
                         time.sleep(self.retry_backoff_seconds * (2**attempt))
                         continue

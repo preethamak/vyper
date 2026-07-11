@@ -23,13 +23,14 @@ Website: https://vyper-web.vercel.app
 ## Features
 
 - Vyper-focused static analysis for .vy contracts
-- 22 built-in detectors (reentrancy, access control, external call safety, arithmetic risks, input validation, ERC-20 return handling)
+- 22 built-in detectors with explicit supported, beta, and experimental maturity labels
 - Always-on compiler advisories (`compiler_version_check`)
 - Multiple report formats: CLI, JSON, Markdown, SARIF, HTML
 - Verification workflows for unit and fuzz tests (`verify`, `test`, `fuzz`)
 - Baseline suppression and baseline-diff for CI stability
 - Optional remediation mode with tiered auto-fix controls
 - Optional compiler-backed semantic mode (install `vyper` extra)
+- Compiler semantics can also use a `vyper` executable on PATH, with engine, version, and fallback provenance in reports
 - CFG-aware CEI analysis plus cyclomatic complexity metrics in reports and `stats`
 - Project-wide graph for directory scans (imports, interfaces, call/state maps)
 - Explorer and on-chain analysis workflows (`explorer`, `analyze-address`)
@@ -65,6 +66,16 @@ Analyze a contract:
 ```bash
 vyper-guard analyze contract.vy
 ```
+
+For the lower-noise supported and beta profile:
+
+```bash
+vyper-guard analyze contract.vy --detectors recommended
+```
+
+`--detectors all` preserves the complete legacy detector set, including
+experimental rules. Detector maturity describes validation evidence, not issue
+severity.
 
 Verify static analysis plus tests:
 
@@ -187,7 +198,10 @@ Supported formats: `cli`, `json`, `markdown`, `sarif`, `html`.
 
 ## Security scoring
 
-Each run produces a score from 0 to 100 and a grade.
+Each run produces a backward-compatible heuristic risk indicator from 0 to 100
+and a grade. It measures detected heuristic risk, not contract safety or
+deployment readiness. Structured reports also include `analysis_trust` with
+compiler coverage, detector maturity, degradation reasons, and limitations.
 
 Base score is 100 with severity-based deductions:
 

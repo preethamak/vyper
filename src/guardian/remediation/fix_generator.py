@@ -185,12 +185,10 @@ def _fix_missing_nonreentrant(gen: FixGenerator, finding: DetectorResult) -> Fix
     indent = _get_indent(gen._original[max(top_line - 1, 0)])
     new_line = f"{indent}@nonreentrant"
 
-    if insert_after >= top_line:
-        patched_lines = [gen._original[insert_line - 1], new_line]
-        preview_insert_idx = idx + 1
-    else:
-        patched_lines = [new_line, gen._original[insert_line - 1]]
-        preview_insert_idx = idx
+    # Replace the insertion-point line with the decorator followed by that
+    # line. This keeps every decorator before the function definition.
+    patched_lines = [new_line, gen._original[insert_line - 1]]
+    preview_insert_idx = idx
 
     gen._patcher.add_patch(
         Patch(
