@@ -7,7 +7,6 @@ from pathlib import Path
 
 from rich import box
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -22,65 +21,40 @@ _SEVERITY_STYLES: dict[Severity, str] = {
     Severity.INFO: "dim",
 }
 
-_SEVERITY_ICONS: dict[Severity, str] = {
-    Severity.CRITICAL: "🔴",
-    Severity.HIGH: "🟠",
-    Severity.MEDIUM: "🟡",
-    Severity.LOW: "🔵",
-    Severity.INFO: "⚪",
-}
-
-_SCORE_ICON = {"A+": "🏆", "A": "✅", "B": "⚠️", "C": "🚨", "F": "💀"}
-
-
 def print_report(report: AnalysisReport, *, console: Console | None = None) -> None:
     """Render an ``AnalysisReport`` to the terminal using Rich."""
     con = console or Console(stderr=True)
 
     # ── Header ───────────────────────────────────────────────────
-    con.print()
-    con.print(
-        Panel(
-            f"[bold]🛡️  Vyper Guard[/bold]  [dim]v{__version__}[/dim]",
-            expand=False,
-            border_style="bright_cyan",
-        )
-    )
-    con.print()
-
     filename = Path(report.file_path).name
-    con.print(f"  [bold]File:[/bold]    {filename}")
+    con.print(f"[bold]Vyper Guard v{__version__}[/bold]")
+    con.print(f"File: {filename}")
     if report.vyper_version:
-        con.print(f"  [bold]Pragma:[/bold]  [dim]{report.vyper_version}[/dim]")
-    con.print()
+        con.print(f"Pragma: [dim]{report.vyper_version}[/dim]")
 
     # ── Score card ───────────────────────────────────────────────
     score = report.security_score
     grade_val = report.grade.value
-    grade_icon = _SCORE_ICON.get(grade_val, "")
     score_colour = "green" if score >= 75 else "yellow" if score >= 45 else "red"
-
-    # Score bar: filled blocks
-    filled = max(0, min(20, score // 5))
-    bar = f"[{score_colour}]{'━' * filled}[/{score_colour}][dim]{'╌' * (20 - filled)}[/dim]"
-
+    trust = report.analysis_context.get("analysis_trust", {})
+    trust_level = trust.get("level", "unknown") if isinstance(trust, dict) else "unknown"
     con.print(
-        f"  {bar}  [{score_colour} bold]{score}/100[/]  "
-        f"{grade_icon} [bold]{grade_val}[/bold] — {report.grade.label}"
+        f"Risk indicator: [{score_colour} bold]{score}/100[/] "
+        f"([bold]{grade_val}[/bold], {report.grade.label}) | Analysis trust: {trust_level}"
     )
     con.print()
 
     if report.failed_detectors:
         failed = ", ".join(report.failed_detectors)
-        con.print(f"  [bold red]⚠ Detector failures:[/bold red] [red]{failed}[/red]")
-        con.print("  [dim]Analysis may be incomplete due to detector runtime errors.[/dim]")
+        con.print(f"[bold red]Detector failures:[/bold red] [red]{failed}[/red]")
+        con.print("[dim]Analysis is incomplete.[/dim]")
         con.print()
 
     _print_verification_section(con, report)
     _print_triage_section(con, report)
 
     if not report.findings:
-        con.print("  [green bold]✅ No issues found — looking good![/green bold]")
+        con.print("[green bold]No findings at the configured threshold.[/green bold]")
         con.print()
         _print_footer(con, report)
         return
@@ -94,10 +68,9 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO):
         n = counts.get(sev, 0)
         if n > 0:
-            icon = _SEVERITY_ICONS[sev]
             style = _SEVERITY_STYLES[sev]
-            parts.append(f"{icon} [{style}]{n} {sev.value}[/]")
-    con.print("  " + "  ".join(parts))
+            parts.append(f"[{style}]{sev.value} {n}[/]")
+    con.print(" | ".join(parts))
     con.print()
 
     # ── Findings table ───────────────────────────────────────────
@@ -115,9 +88,8 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     table.add_column("Line", width=6, justify="right")
 
     for finding in display_findings:
-        icon = _SEVERITY_ICONS.get(finding.severity, "")
         sev_text = Text(
-            f"{icon} {finding.severity.value}",
+            finding.severity.value,
             style=_SEVERITY_STYLES[finding.severity],
         )
         line_str = str(finding.line_number) if finding.line_number else "—"
@@ -135,15 +107,14 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     # ── Detailed findings ────────────────────────────────────────
     for finding in display_findings:
         style = _SEVERITY_STYLES[finding.severity]
-        icon = _SEVERITY_ICONS.get(finding.severity, "")
-        con.print(f"  {icon} [{style}]{finding.severity.value}[/]  {finding.title}")
+        con.print(f"[{style}]{finding.severity.value}[/]  {finding.title}")
         con.print(f"    [dim]{finding.description}[/dim]")
         if finding.source_snippet:
             con.print("    [dim]Source:[/dim]")
             for snippet_line in finding.source_snippet.splitlines()[:8]:
                 con.print(f"      [dim]{snippet_line}[/dim]")
         if finding.fix_suggestion:
-            con.print(f"    [green]💡 Fix:[/green] {finding.fix_suggestion}")
+            con.print(f"    [green]Remediation:[/green] {finding.fix_suggestion}")
         if finding.exploit_verification:
             _print_exploit_verification(con, finding.exploit_verification)
         con.print()
@@ -177,9 +148,9 @@ def _print_triage_section(con: Console, report: AnalysisReport) -> None:
     policy_status = str(policy.get("status") or "unknown")
     scoring = str(policy.get("scoring") or "triage_scoring_v1")
 
-    con.print("  [bold]AI-Assisted Triage[/bold]")
+    con.print("[bold]Priority Triage[/bold]")
     con.print(
-        f"  [dim]policy={policy_version} status={policy_status} scoring={scoring}; "
+        f"[dim]policy={policy_version} status={policy_status} scoring={scoring}; "
         "advisory metadata only[/dim]"
     )
 
@@ -248,10 +219,9 @@ def _print_footer(con: Console, report: AnalysisReport) -> None:
     if report.failed_detectors:
         health_msg = f" │ Score trust: DEGRADED │ Failed detectors: {len(report.failed_detectors)}"
     con.print(
-        f"  [dim]Detectors run: {len(report.detectors_run)} │ "
+        f"[dim]Detectors run: {len(report.detectors_run)} | "
         f"Findings: {len(report.findings)}"
-        f"{health_msg} │ "
-        f"Use [bold]--fix[/bold] to auto-patch[/dim]"
+        f"{health_msg}[/dim]"
     )
     con.print()
 

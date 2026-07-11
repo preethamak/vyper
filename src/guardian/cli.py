@@ -28,7 +28,6 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
-from rich.tree import Tree
 
 from guardian import __app_name__, __version__
 from guardian.analyzer.ai_triage import apply_ai_triage
@@ -47,7 +46,7 @@ from guardian.models import (
     Severity,
     VulnerabilityType,
 )
-from guardian.reporting.formatter import print_report  # noqa: F401  - public API
+from guardian.reporting.formatter import print_report
 from guardian.reporting.html_exporter import export_html
 from guardian.reporting.json_exporter import export_json, report_to_dict
 from guardian.reporting.markdown_exporter import export_markdown
@@ -77,7 +76,7 @@ console = Console(stderr=True)
 # ── Typer app ────────────────────────────────────────────────────
 app = typer.Typer(
     name=__app_name__,
-    help="🛡️  Vyper Guard — static analysis for Vyper smart contracts.",
+    help="Vyper Guard static analysis for Vyper smart contracts.",
     add_completion=True,
     no_args_is_help=False,
     rich_markup_mode="rich",
@@ -276,11 +275,7 @@ def _set_user_config_value(section: str, key: str, value: object) -> None:
 
 def _print_banner() -> None:
     """Print the compact branded banner for sub-commands."""
-    console.print(_LOGO_COMPACT)
-    console.print(
-        f"  [dim]v{__version__}[/dim]  "
-        f"[dim]|[/dim]  [dim]Vyper-native smart contract security toolkit[/dim]"
-    )
+    console.print(f"[bold]Vyper Guard {__version__}[/bold]")
     console.print()
 
 
@@ -441,7 +436,7 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """🛡️ Vyper Guard — Vyper-native smart contract security analysis."""
+    """Run Vyper-native smart contract security analysis."""
     if ctx.invoked_subcommand is None:
         _print_home_screen()
         raise typer.Exit()
@@ -2137,12 +2132,12 @@ def _print_project_cli_summary(
     summary_table.add_row("📁 Target", str(target_dir))
     summary_table.add_row("📄 Contracts", str(len(reports)))
     summary_table.add_row("🔎 Findings", str(summary["total"]))
-    summary_table.add_row("🚨 Critical", str(summary["critical"]))
+    summary_table.add_row("Critical", str(summary["critical"]))
     summary_table.add_row("🟠 High", str(summary["high"]))
     summary_table.add_row("🟡 Medium", str(summary["medium"]))
     summary_table.add_row("🔵 Low", str(summary["low"]))
     summary_table.add_row("⚪ Info", str(summary["info"]))
-    summary_table.add_row("📊 Avg Score", str(score_avg))
+    summary_table.add_row("Average score", str(score_avg))
     summary_table.add_row("⏱️ Duration", f"{elapsed_ms:.0f} ms")
     console.print(summary_table)
     console.print()
@@ -2171,7 +2166,7 @@ def _print_verification_cli(verification: dict[str, object] | None) -> None:
     if not isinstance(verification, dict):
         return
 
-    console.print(Rule("[bold]✅ Verification[/bold]", style=ACCENT))
+    console.print(Rule("[bold]Verification[/bold]", style=ACCENT))
     summary = (
         verification.get("summary", {}) if isinstance(verification.get("summary"), dict) else {}
     )
@@ -2693,6 +2688,7 @@ def test(
         format=format,
         output=output,
         baseline_file=None,
+        audit_labels=None,
         baseline_diff=False,
         update_baseline=False,
         detectors=None,
@@ -2743,6 +2739,7 @@ def fuzz(
         format=format,
         output=output,
         baseline_file=None,
+        audit_labels=None,
         baseline_diff=False,
         update_baseline=False,
         detectors=None,
@@ -3158,11 +3155,13 @@ def fix_cmd(
         format=format,
         output=output,
         baseline_file=None,
+        audit_labels=None,
         baseline_diff=False,
         update_baseline=False,
         detectors=detectors,
         severity_threshold=severity_threshold,
         semantic_mode=semantic_mode,
+        project_graph=None,
         config=config,
         ci=False,
         verbose=verbose,
@@ -4418,312 +4417,9 @@ def benchmark(
         raise typer.Exit(code=1)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Rich report renderer (the beautiful one)
-# ═══════════════════════════════════════════════════════════════════
-
-
 def _print_rich_report(report: AnalysisReport, elapsed_ms: float = 0.0) -> None:
-    """Render a stunning analysis report to the terminal."""
-    console.print(_LOGO_COMPACT)
-    console.print(
-        f"  [bold white]v{__version__}[/bold white]  [dim]|[/dim]  [bold]Security Report[/bold]"
-    )
-    console.print()
-
-    # ── Contract metadata panel ──
-    filename = Path(report.file_path).name
-    meta_table = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), expand=True)
-    meta_table.add_column("Key", style=f"bold {ACCENT}", min_width=20)
-    meta_table.add_column("Value")
-
-    meta_table.add_row("📄 File", filename)
-    meta_table.add_row("📁 Path", report.file_path)
-    if report.vyper_version:
-        meta_table.add_row("🐍 Vyper Version", report.vyper_version)
-
-    # Avoid re-reading/parsing from disk during render to prevent TOCTOU mismatch.
-    meta_table.add_row("📏 Lines of Code", "n/a")
-
-    meta_table.add_row("🔧 Detectors Run", str(len(report.detectors_run)))
-    if elapsed_ms > 0:
-        meta_table.add_row("⏱️  Duration", f"{elapsed_ms:.0f} ms")
-    meta_table.add_row("🏷️  Tool Version", __version__)
-
-    console.print(meta_table)
-    console.print()
-    _print_verification_cli(
-        report.analysis_context.get("verification")
-        if isinstance(report.analysis_context, dict)
-        else None
-    )
-
-    # ── Score card + Severity breakdown side by side ──
-    score = report.security_score
-    grade_val = report.grade.value
-    grade_icon = _GRADE_ICON.get(grade_val, "🔎")
-    grade_style = _GRADE_STYLE.get(grade_val, "white")
-
-    # Score bar
-    filled = max(0, min(30, int(score / 100 * 30)))
-    bar_color = grade_style.replace("bold ", "")
-    bar = f"[{bar_color}]{'█' * filled}[/{bar_color}][dim]{'░' * (30 - filled)}[/dim]"
-
-    score_content = (
-        f"\n  {grade_icon}  [{grade_style}]{grade_val}[/{grade_style}]"
-        f"  [bold]{score}[/bold] / 100\n"
-        f"  [{DIM}]{report.grade.label}[/{DIM}]\n\n"
-        f"  {bar}\n"
-    )
-    score_panel = Panel(
-        score_content,
-        title="[bold]Security Score[/bold]",
-        border_style=grade_style,
-        padding=(0, 2),
-        width=45,
-    )
-
-    # Severity breakdown with bars
-    counts = Counter(f.severity for f in report.findings)
-    max_count = max(counts.values()) if counts else 1
-
-    bd_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
-    bd_table.add_column("Icon", width=3, justify="center")
-    bd_table.add_column("Severity", min_width=10)
-    bd_table.add_column("Count", justify="right", min_width=5)
-    bd_table.add_column("Bar", min_width=20)
-
-    for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO):
-        n = counts.get(sev, 0)
-        icon = _SEV_ICONS.get(sev.value, "")
-        style = _SEV_STYLES.get(sev.value, "dim")
-        bar_len = int((n / max_count) * 20) if max_count > 0 and n > 0 else 0
-        bbar = f"[{style}]{'█' * bar_len}{'░' * (20 - bar_len)}[/{style}]"
-        bd_table.add_row(icon, f"[{style}]{sev.value}[/{style}]", str(n), bbar)
-
-    breakdown_panel = Panel(
-        bd_table,
-        title="[bold]Severity Breakdown[/bold]",
-        border_style=ACCENT,
-        padding=(0, 1),
-        width=45,
-    )
-
-    console.print(Columns([score_panel, breakdown_panel], padding=2, expand=True))
-    console.print()
-
-    # ── No findings? ──
-    if not report.findings:
-        console.print(
-            Panel(
-                "[bold green]✅ No vulnerabilities detected![/bold green]\n\n"
-                "  Your contract passed all enabled detectors.\n"
-                "  [dim]This does not guarantee safety — consider a professional audit.[/dim]",
-                border_style="green",
-                padding=(1, 3),
-            )
-        )
-        console.print()
-        _print_analysis_footer(report)
-        return
-
-    # ── Findings table (compact overview) ──
-    console.print(
-        Rule(
-            f"[bold]🔍 Findings ({len(report.findings)})[/bold]",
-            style=ACCENT,
-        )
-    )
-    console.print()
-
-    table = Table(
-        show_header=True,
-        header_style="bold",
-        box=box.ROUNDED,
-        expand=True,
-        pad_edge=True,
-        show_lines=True,
-    )
-    table.add_column("Sev", width=12, justify="center")
-    table.add_column("Detector", style=f"bold {ACCENT}", width=28)
-    table.add_column("Title", ratio=1)
-    table.add_column("Conf", width=8, justify="center")
-    table.add_column("Line", width=6, justify="right")
-
-    for finding in report.findings:
-        icon = _SEV_ICONS.get(finding.severity.value, "")
-        sev_text = Text(
-            f"{icon} {finding.severity.value}",
-            style=_SEV_STYLES.get(finding.severity.value, ""),
-        )
-        line_str = str(finding.line_number) if finding.line_number else "—"
-        conf_text = Text(
-            finding.confidence.value,
-            style="green" if finding.confidence.value == "HIGH" else "yellow",
-        )
-        table.add_row(sev_text, finding.detector_name, finding.title, conf_text, line_str)
-
-    console.print(table)
-    console.print()
-
-    # ── Detailed finding panels ──
-    console.print(Rule("[bold]📋 Detailed Findings[/bold]", style=ACCENT))
-    console.print()
-
-    for idx, finding in enumerate(report.findings):
-        _print_finding_panel(idx, finding)
-
-    if report.ai_triage:
-        _print_ai_triage_section(report)
-
-    _print_analysis_footer(report)
-
-
-def _print_finding_panel(idx: int, finding: DetectorResult) -> None:
-    """Render a single finding as a beautiful panel."""
-    sev = finding.severity.value
-    style = _SEV_STYLES.get(sev, "dim")
-    icon = _SEV_ICONS.get(sev, "⚪")
-
-    content_parts: list[str] = []
-    content_parts.append(f"[bold]Description:[/bold] {finding.description}")
-
-    if finding.line_number:
-        loc = f"Line {finding.line_number}"
-        if finding.end_line_number and finding.end_line_number != finding.line_number:
-            loc += f"-{finding.end_line_number}"
-        content_parts.append(f"[bold]Location:[/bold] {loc}")
-
-    content_parts.append(f"[bold]Detector:[/bold] [dim]{finding.detector_name}[/dim]")
-    content_parts.append(f"[bold]Category:[/bold] [dim]{finding.vulnerability_type.value}[/dim]")
-
-    if finding.source_snippet:
-        snippet = finding.source_snippet.strip()
-        lines = snippet.split("\n")
-        if len(lines) > 8:
-            snippet = "\n".join(lines[:8]) + "\n  ..."
-        content_parts.append(f"\n[bold]Source:[/bold]\n[on #1a1a2e]{snippet}[/on #1a1a2e]")
-
-    if finding.fix_suggestion:
-        content_parts.append(f"\n[bold green]💡 Fix:[/bold green] {finding.fix_suggestion}")
-
-    content = "\n".join(content_parts)
-
-    console.print(
-        Panel(
-            content,
-            title=f"[bold]#{idx + 1}[/bold] {icon} {finding.title}",
-            subtitle=f"[{style}]{sev}[/{style}] • Confidence: {finding.confidence.value}",
-            border_style=style,
-            padding=(1, 2),
-            expand=True,
-        )
-    )
-    console.print()
-
-
-def _print_analysis_footer(report: AnalysisReport) -> None:
-    """Print the summary footer with detectors tree."""
-    # Detectors tree
-    det_tree = Tree(f"[bold {ACCENT}]🔧 Detectors Run[/bold {ACCENT}]")
-    for d in sorted(report.detectors_run):
-        det_tree.add(f"[dim]•[/dim] {d}")
-    console.print(det_tree)
-    console.print()
-
-    console.print(
-        Rule(
-            f"[dim]{__app_name__} v{__version__} • https://deepwiki.com/preethamak/vyper • https://vyper-web.vercel.app[/dim]",
-            style="dim",
-        )
-    )
-    console.print()
-
-
-def _print_ai_triage_section(report: AnalysisReport) -> None:
-    """Render optional Priority Triage (Deterministic) metadata."""
-    console.print(
-        Rule("[bold]Priority Triage[/bold] [dim](AI-Assisted Triage)[/dim]", style=ACCENT)
-    )
-    console.print()
-
-    policy_version = report.ai_triage_policy.get("policy_version", "unknown")
-    policy_status = report.ai_triage_policy.get("status", "unknown")
-    deterministic_mode = bool(report.ai_triage_policy.get("deterministic", True))
-    mode_label = "deterministic" if deterministic_mode else "llm-assisted"
-    console.print(
-        f"[dim]Policy: v{policy_version} ({policy_status}) • {mode_label} advisory metadata[/dim]"
-    )
-    scoring_versions = {
-        str(item.get("scoring_rationale", {}).get("version", "")).strip()
-        for item in report.ai_triage
-    }
-    scoring_versions = {v for v in scoring_versions if v}
-    if scoring_versions:
-        ordered_versions = ", ".join(sorted(scoring_versions))
-        console.print(f"[dim]Scoring profile: {ordered_versions}[/dim]")
-    policy_warnings = report.ai_triage_policy.get("warnings", [])
-    if isinstance(policy_warnings, list):
-        for w in policy_warnings:
-            console.print(f"[{WARN}]Policy warning:[/{WARN}] {w}")
-    console.print()
-
-    console.print("[bold]Triage Summary[/bold]")
-    top_items = sorted(
-        report.ai_triage,
-        key=lambda item: int(item.get("priority_rank", 9999) or 9999),
-    )[:3]
-    if top_items:
-        for item in top_items:
-            rank = item.get("priority_rank", "—")
-            detector = item.get("detector", "—")
-            bucket = item.get("triage_bucket", "—")
-            conf = item.get("confidence", "—")
-            reasoning = str(item.get("reasoning", "")).strip()
-            next_step = str(item.get("suggested_next_step", "")).strip()
-            line = f"{rank}. {detector} ({bucket}) confidence={conf}."
-            if reasoning:
-                line += f" {reasoning}"
-            if next_step:
-                line += f" Next: {next_step}"
-            console.print(f"  {line}")
-    else:
-        console.print("  No triage items available.")
-    console.print()
-
-    triage_table = Table(
-        show_header=True,
-        header_style="bold",
-        box=box.ROUNDED,
-        expand=True,
-    )
-    triage_table.add_column("Rank", width=6, justify="right")
-    triage_table.add_column("Bucket", width=14)
-    triage_table.add_column("Detector", width=28, style=f"bold {ACCENT}")
-    triage_table.add_column("Confidence", width=10, justify="right")
-    triage_table.add_column("Scoring", width=22)
-    triage_table.add_column("Next Step", ratio=1)
-
-    for item in report.ai_triage:
-        scoring = item.get("scoring_rationale", {})
-        scoring_text = (
-            f"{scoring.get('version', '—')} "
-            f"(b={scoring.get('severity_base', '—')}+e={scoring.get('evidence_bonus', '—')})"
-        )
-        triage_table.add_row(
-            str(item.get("priority_rank", "—")),
-            str(item.get("triage_bucket", "—")),
-            str(item.get("detector", "—")),
-            str(item.get("confidence", "—")),
-            scoring_text,
-            str(item.get("suggested_next_step", "—")),
-        )
-
-    console.print(triage_table)
-    console.print(
-        "[dim]Guardrail: triage is advisory only and cannot override deterministic detector verdicts.[/dim]"
-    )
-    console.print()
+    """Render the default concise analysis report."""
+    print_report(report, console=console)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -4816,7 +4512,7 @@ def _run_fix_mode(
                 con.print(f"    [{DIM}]• {s.finding.detector_name}: {s.description}[/{DIM}]")
             con.print()
         con.print(
-            f"\n  [{WARN}]⚠  No auto-fixes available within risk tier ≤ {max_auto_fix_tier}.[/{WARN}]\n"
+            f"\n  [{WARN}]No auto-fixes available within risk tier <= {max_auto_fix_tier}.[/{WARN}]\n"
         )
         remediation_report["summary"] = {
             "generated": len(results),
@@ -4878,7 +4574,7 @@ def _run_fix_mode(
             con.print(Syntax(result.diff, "diff", theme="monokai", line_numbers=False))
         if result.warnings:
             for w in result.warnings:
-                con.print(f"    [{WARN}]⚠ {w}[/{WARN}]")
+                con.print(f"    [{WARN}]Warning: {w}[/{WARN}]")
         con.print()
 
         remediation_report["generated_fixes"].append(
@@ -5055,7 +4751,7 @@ def _run_fix_mode(
 
     # Write to .fixed.vy file
     fixed_path.write_text(patched, encoding="utf-8")
-    con.print(f"  [{OK}]✅  Patched contract written to:[/{OK}] [bold]{fixed_path}[/bold]")
+    con.print(f"  [{OK}]Patched contract written to:[/{OK}] [bold]{fixed_path}[/bold]")
 
     # Ask user if they want to overwrite the original
     try:
@@ -5082,7 +4778,7 @@ def _run_fix_mode(
         con.print(f"  [{OK}]Backup created:[/{OK}] [bold]{backup_path}[/bold]")
 
         file_path.write_text(patched, encoding="utf-8")
-        con.print(f"  [{OK}]✅  Original file updated:[/{OK}] [bold]{file_path}[/bold]")
+        con.print(f"  [{OK}]Original file updated:[/{OK}] [bold]{file_path}[/bold]")
         if fixed_path.exists():
             fixed_path.unlink()
     else:
@@ -6185,7 +5881,7 @@ def stats(
     }
 
     # ── Overview table ──
-    console.print(Rule(f"[bold {ACCENT}]📊 Contract Statistics — {file_path.name}[/bold {ACCENT}]"))
+    console.print(Rule(f"[bold {ACCENT}]Contract statistics: {file_path.name}[/bold {ACCENT}]"))
     console.print()
 
     overview = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), expand=True)
@@ -6198,8 +5894,8 @@ def stats(
     overview.add_row("💻 Code Lines", f"{code_lines:,}")
     overview.add_row("💬 Comment Lines", f"{comment_lines:,}")
     overview.add_row("⬜ Blank Lines", f"{blank_lines:,}")
-    overview.add_row("🔍 Functions", str(len(contract.functions)))
-    overview.add_row("📊 State Variables", str(len(contract.state_variables)))
+    overview.add_row("Functions", str(len(contract.functions)))
+    overview.add_row("State variables", str(len(contract.state_variables)))
     overview.add_row("📢 Events", str(len(contract.events)))
     overview.add_row("📦 Imports", str(len(contract.imports)))
     console.print(overview)
@@ -6283,7 +5979,7 @@ def stats(
 
     # ── Functions tree ──
     if contract.functions:
-        console.print(Rule("[bold]🔍 Functions[/bold]", style=ACCENT))
+        console.print(Rule("[bold]Functions[/bold]", style=ACCENT))
         console.print()
 
         func_table = Table(
@@ -6368,7 +6064,7 @@ def stats(
         console.print(cx_table)
         if complexity_report.high_complexity_functions:
             console.print(
-                f"  [{WARN}]⚠  {len(complexity_report.high_complexity_functions)} function(s) "
+                f"  [{WARN}]{len(complexity_report.high_complexity_functions)} function(s) "
                 f"with complexity >10 — consider refactoring.[/{WARN}]"
             )
         console.print(
@@ -6378,7 +6074,7 @@ def stats(
         console.print()
 
     if contract.state_variables:
-        console.print(Rule("[bold]📊 State Variables[/bold]", style=ACCENT))
+        console.print(Rule("[bold]State variables[/bold]", style=ACCENT))
         console.print()
 
         var_table = Table(
@@ -6538,7 +6234,7 @@ def diff(
     fixed_in_b = [f for f in report_a.findings if _diff_key(f) not in keys_b]
 
     if fixed_in_b:
-        console.print(f"  [green]✅ {len(fixed_in_b)} finding(s) fixed in {file_b.name}:[/green]")
+        console.print(f"  [green]{len(fixed_in_b)} finding(s) fixed in {file_b.name}:[/green]")
         for f in fixed_in_b:
             console.print(f"    [green]  ✓ {f.detector_name}: {f.title}[/green]")
         console.print()
@@ -6670,7 +6366,7 @@ def init(
         raise typer.Exit(1)
 
     config_path.write_text(_DEFAULT_CONFIG, encoding="utf-8")
-    console.print(f"  [{OK}]✅ Created {config_path}[/{OK}]")
+    console.print(f"  [{OK}]Created {config_path}[/{OK}]")
     console.print(f"  [{DIM}]Edit the file to customise analysis settings.[/{DIM}]")
     console.print()
 
