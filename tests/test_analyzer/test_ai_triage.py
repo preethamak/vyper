@@ -153,7 +153,7 @@ def test_cli_output_renders_ai_triage_section() -> None:
 
         assert result.exit_code == 0
         combined = result.stdout + result.stderr
-        assert "AI-Assisted Triage" in combined
+        assert "Priority Triage" in combined
         assert "triage_scoring_v1" in combined
 
 

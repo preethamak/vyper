@@ -153,6 +153,10 @@ def _print_triage_section(con: Console, report: AnalysisReport) -> None:
         f"[dim]policy={policy_version} status={policy_status} scoring={scoring}; "
         "advisory metadata only[/dim]"
     )
+    warnings = policy.get("warnings", [])
+    if isinstance(warnings, list):
+        for warning in warnings:
+            con.print(f"[yellow]Policy warning:[/yellow] {warning}")
 
     table = Table(box=box.SIMPLE_HEAVY, show_header=True)
     table.add_column("Rank", justify="right", width=5)
@@ -165,11 +169,11 @@ def _print_triage_section(con: Console, report: AnalysisReport) -> None:
         if not isinstance(item, dict):
             continue
         table.add_row(
-            str(item.get("rank") or "—"),
-            str(item.get("bucket") or "—"),
+            str(item.get("priority_rank") or "—"),
+            str(item.get("triage_bucket") or "—"),
             str(item.get("detector") or "—"),
             str(item.get("severity") or "—"),
-            str(item.get("next_step") or "—"),
+            str(item.get("suggested_next_step") or "—"),
         )
 
     con.print(table)
