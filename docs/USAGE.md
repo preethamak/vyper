@@ -101,6 +101,22 @@ Reviewed audit labels use `vyper-guard-labels/v2`. A label must include `file`,
 `finding_id` and `function` fields allow published findings to be reported as
 `known_issue_rediscovered`; unmatched output remains a `new_candidate`.
 
+Apply labels during normal analysis:
+
+```bash
+vyper-guard analyze contracts/ --audit-labels audit-labels.json --format json
+```
+
+Check whether supported detectors have enough independent evidence for promotion:
+
+```bash
+vyper-guard label-quality audit-labels.json \
+  --min-positive 25 --min-negative 25 --min-reviewers 2 --ci
+```
+
+The gate does not manufacture labels or treat scanner output as ground truth. A supported
+detector fails the gate until reviewed positive and negative examples satisfy all thresholds.
+
 Command note:
 
 - `audit` is a reserved command path and can be unavailable in this build.

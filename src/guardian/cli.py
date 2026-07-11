@@ -32,9 +32,12 @@ from rich.tree import Tree
 
 from guardian import __app_name__, __version__
 from guardian.analyzer.ai_triage import apply_ai_triage
+from guardian.analyzer.audit_labels import classify_report, load_audit_labels
 from guardian.analyzer.benchmark import run_corpus_benchmark
 from guardian.analyzer.project_graph import build_project_graph
+from guardian.analyzer.quality_gate import evaluate_label_quality
 from guardian.analyzer.static import StaticAnalyzer
+from guardian.analyzer.triage import build_triage_summary
 from guardian.analyzer.vyper_detector import list_detectors as _list_detectors
 from guardian.models import (
     AnalysisReport,
@@ -1082,6 +1085,11 @@ def analyze(
         "--baseline-file",
         help="Optional finding baseline JSON file (suppresses matching fingerprints).",
     ),
+    audit_labels: Path | None = typer.Option(
+        None,
+        "--audit-labels",
+        help="Reviewed labels used to classify known issues and new candidates.",
+    ),
     baseline_diff: bool = typer.Option(
         False,
         "--baseline-diff",
@@ -1226,6 +1234,14 @@ def analyze(
         raise typer.Exit(code=2)
 
     baseline_fingerprints = _load_baseline_fingerprints(baseline_file)
+    if audit_labels is not None and not audit_labels.is_file():
+        console.print(f"[{ERR}]Invalid audit labels file:[/{ERR}] {audit_labels}")
+        raise typer.Exit(code=2)
+    try:
+        reviewed_labels = load_audit_labels(audit_labels) if audit_labels else ()
+    except (ValueError, OSError, _json.JSONDecodeError) as exc:
+        console.print(f"[{ERR}]Invalid audit labels:[/{ERR}] {exc}")
+        raise typer.Exit(code=2) from exc
 
     if file_path.is_dir():
         if fix or fix_dry_run or fix_report:
@@ -1263,6 +1279,7 @@ def analyze(
             project_graph=project_graph_enabled,
             severity_threshold=threshold,
             verification=None,
+            audit_labels_file=audit_labels,
         )
         return
 
@@ -1284,6 +1301,9 @@ def analyze(
         ai_llm_model=ai_llm_model,
         ai_allow_fallback=ai_allow_fallback,
     )
+    if reviewed_labels:
+        report.analysis_context["audit_classification"] = classify_report(report, reviewed_labels)
+        report.analysis_context["triage_summary"] = build_triage_summary(report)
 
     _emit_single_report(
         report=report,
@@ -2225,6 +2245,7 @@ def _analyze_directory_target(
     project_graph: bool,
     severity_threshold: Severity,
     verification: dict[str, object] | None,
+    audit_labels_file: Path | None = None,
 ) -> list[AnalysisReport]:
     vy_files = sorted(path for path in target_dir.rglob("*.vy") if path.is_file())
     if not vy_files:
@@ -2262,6 +2283,14 @@ def _analyze_directory_target(
         graph_result = build_project_graph(target_dir, vy_files)
         project_graph_payload = graph_result.graph
         _apply_project_findings(reports, graph_result.findings, severity_threshold)
+
+    if audit_labels_file is not None:
+        reviewed_labels = load_audit_labels(audit_labels_file)
+        for report in reports:
+            report.analysis_context["audit_classification"] = classify_report(
+                report, reviewed_labels
+            )
+            report.analysis_context["triage_summary"] = build_triage_summary(report)
 
     raw_fingerprints: set[str] = set()
     for report in reports:
@@ -4133,6 +4162,39 @@ def agent_memory(
 
     console.print(f"[{ERR}]Invalid action:[/{ERR}] {action}. Use tail, clear, or stats.")
     raise typer.Exit(code=2)
+
+
+@app.command()
+def label_quality(
+    labels_file: Path = typer.Argument(..., help="Reviewed vyper-guard-labels/v2 file."),
+    min_positive: int = typer.Option(25, "--min-positive", min=1),
+    min_negative: int = typer.Option(25, "--min-negative", min=1),
+    min_reviewers: int = typer.Option(2, "--min-reviewers", min=1),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    ci: bool = typer.Option(False, "--ci", help="Exit 1 if a supported detector fails."),
+) -> None:
+    """Validate independent label coverage required for detector promotion."""
+    if not labels_file.is_file():
+        console.print(f"[{ERR}]Invalid labels file:[/{ERR}] {labels_file}")
+        raise typer.Exit(code=2)
+    try:
+        payload = evaluate_label_quality(
+            labels_file,
+            min_positive=min_positive,
+            min_negative=min_negative,
+            min_reviewers=min_reviewers,
+        )
+    except (ValueError, OSError, _json.JSONDecodeError) as exc:
+        console.print(f"[{ERR}]Invalid labels:[/{ERR}] {exc}")
+        raise typer.Exit(code=2) from exc
+    text = _json.dumps(payload, indent=2, ensure_ascii=False)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text + "\n", encoding="utf-8")
+    else:
+        typer.echo(text)
+    if ci and not payload["supported_gate_passed"]:
+        raise typer.Exit(code=1)
 
 
 @app.command()
