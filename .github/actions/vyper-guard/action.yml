@@ -16,6 +16,12 @@ inputs:
   baseline-file:
     description: Optional repository-relative finding baseline.
     default: ""
+  audit-labels:
+    description: Optional repository-relative reviewed audit labels.
+    default: ""
+  policy-file:
+    description: Optional repository-relative team policy YAML.
+    default: ""
   output:
     description: SARIF output path.
     default: vyper-guard.sarif
@@ -26,6 +32,15 @@ outputs:
   sarif:
     description: Generated SARIF path.
     value: ${{ steps.scan.outputs.sarif }}
+  json:
+    description: Full deterministic JSON report path.
+    value: ${{ steps.scan.outputs.json }}
+  policy-result:
+    description: Team policy evaluation JSON path.
+    value: ${{ steps.policy.outputs.result }}
+  pr-summary:
+    description: Concise pull-request Markdown path.
+    value: ${{ steps.policy.outputs.markdown }}
 runs:
   using: composite
   steps:
@@ -48,6 +63,7 @@ runs:
         DETECTORS: ${{ inputs.detectors }}
         SEVERITY: ${{ inputs.severity }}
         BASELINE_FILE: ${{ inputs.baseline-file }}
+        AUDIT_LABELS: ${{ inputs.audit-labels }}
         OUTPUT: ${{ inputs.output }}
         FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
       run: |
@@ -56,8 +72,38 @@ runs:
         if [[ -n "$BASELINE_FILE" ]]; then
           args+=(--baseline-file "$BASELINE_FILE" --baseline-diff)
         fi
+        if [[ -n "$AUDIT_LABELS" ]]; then
+          args+=(--audit-labels "$AUDIT_LABELS")
+        fi
         if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
           args+=(--ci)
         fi
         vyper-guard "${args[@]}"
+        json_output="${OUTPUT%.sarif}.json"
+        json_args=(analyze "$TARGET" --format json --output "$json_output" --detectors "$DETECTORS" --severity-threshold "$SEVERITY")
+        if [[ -n "$BASELINE_FILE" ]]; then
+          json_args+=(--baseline-file "$BASELINE_FILE" --baseline-diff)
+        fi
+        if [[ -n "$AUDIT_LABELS" ]]; then
+          json_args+=(--audit-labels "$AUDIT_LABELS")
+        fi
+        vyper-guard "${json_args[@]}"
         echo "sarif=$OUTPUT" >> "$GITHUB_OUTPUT"
+        echo "json=$json_output" >> "$GITHUB_OUTPUT"
+    - name: Evaluate team policy
+      id: policy
+      if: inputs.policy-file != ''
+      shell: bash
+      env:
+        POLICY_FILE: ${{ inputs.policy-file }}
+        REPORT: ${{ steps.scan.outputs.json }}
+      run: |
+        set -euo pipefail
+        result="vyper-guard-policy.json"
+        markdown="vyper-guard-pr.md"
+        python "$GITHUB_ACTION_PATH/../../../scripts/pr_review.py" \
+          --report "$REPORT" --policy "$POLICY_FILE" \
+          --result "$result" --markdown "$markdown"
+        cat "$markdown" >> "$GITHUB_STEP_SUMMARY"
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+        echo "markdown=$markdown" >> "$GITHUB_OUTPUT"

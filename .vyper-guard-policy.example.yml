@@ -1,0 +1,14 @@
+schema: vyper-guard-team-policy/v1
+gate:
+  min_severity: HIGH
+  min_confidence: HIGH
+  classifications: [new_candidate]
+owners:
+  default: security-team
+  cei_violation: protocol-team
+  compiler_version_check: platform-team
+acceptances:
+  - fingerprint: replace-with-reviewed-fingerprint
+    owner: security-team
+    reason: Accepted after manual review
+    expires_at: 2027-01-01T00:00:00Z

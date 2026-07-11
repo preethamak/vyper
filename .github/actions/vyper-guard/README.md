@@ -26,6 +26,8 @@ jobs:
           target: contracts
           detectors: recommended
           baseline-file: .vyper-guard-baseline.json
+          audit-labels: security/audit-labels.json
+          policy-file: .vyper-guard-policy.yml
       - uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: ${{ steps.vyper-guard.outputs.sarif }}
