@@ -180,6 +180,26 @@ _ROLE_GUARD_RE = re.compile(
     r"\bself\._enforce_role\s*\("
     r"|\b(?:access_control\.)?_(?:check|enforce)_role\s*\("
 )
+
+
+def _is_user_scoped_supply_reduction(func: FunctionInfo, body: str) -> bool:
+    if func.name not in {"withdraw", "burn", "redeem"}:
+        return False
+    reduces_supply = bool(
+        re.search(
+            r"\bself\.(?:supply|total_supply)\s*(?:-\=|=\s*[^\n]+\s-\s[^\n]+)",
+            body,
+        )
+    )
+    user_position = bool(
+        re.search(
+            r"\bself\.(?:locked|balances?|shares?)\s*\[\s*msg\.sender\s*\]",
+            body,
+        )
+    )
+    return reduces_supply and user_position
+
+
 # Timestamp usage in conditional.
 _TIMESTAMP_COND_RE = re.compile(
     r"\b(?:assert|if|elif|while)\b[^\n#]*\bblock\.timestamp\b"
@@ -937,6 +957,10 @@ class UnprotectedStateChangeDetector(BaseDetector):
             if _ACCESS_CONTROL_RE.search(body):
                 continue
             var_name = m.group(1)
+            if var_name in {"supply", "total_supply"} and _is_user_scoped_supply_reduction(
+                func, body
+            ):
+                continue
             results.append(
                 self._make_result(
                     title=f"Unprotected write to self.{var_name} in {func.name}()",
@@ -1666,6 +1690,7 @@ class ShadowedStateVariableDetector(BaseDetector):
                     if p:
                         param_names.add(p)
             seen_in_func: set[str] = set()
+            cached_state_aliases: set[str] = set()
             for i, line in enumerate(func.body_lines):
                 code = _strip_inline_comment(line)
                 m = _LOCAL_VAR_ASSIGN_RE.match(code)
@@ -1673,6 +1698,11 @@ class ShadowedStateVariableDetector(BaseDetector):
                     continue
                 var = m.group(1)
                 if var in param_names or var.startswith("self"):
+                    continue
+                if re.search(rf"=\s*self\.{re.escape(var)}\b", code):
+                    cached_state_aliases.add(var)
+                    continue
+                if var in cached_state_aliases:
                     continue
                 if (
                     var in state_variables
@@ -1887,7 +1917,10 @@ class MissingReturnValueDetector(BaseDetector):
 # ---------------------------------------------------------------------------
 
 
-_DIV_MUL_RE = re.compile(r"\(\s*[^()+\-*/\n]+\s*/\s*[^()+\-*/\n]+\s*\)\s*\*")
+_DIV_MUL_RE = re.compile(
+    r"\(\s*(?P<numerator>[^()+\-*/\n]+)\s*/\s*(?P<divisor>[^()+\-*/\n]+)\s*\)"
+    r"\s*\*\s*(?P<multiplier>[A-Za-z_]\w*|\d+)"
+)
 
 
 class DivisionBeforeMultiplicationDetector(BaseDetector):
@@ -1904,7 +1937,10 @@ class DivisionBeforeMultiplicationDetector(BaseDetector):
         for func in contract.functions:
             for i, line in enumerate(func.body_lines):
                 code = _strip_inline_comment(line).strip()
-                if not _DIV_MUL_RE.search(code):
+                match = _DIV_MUL_RE.search(code)
+                if not match:
+                    continue
+                if match.group("divisor").strip() == match.group("multiplier").strip():
                     continue
                 abs_line = func.end_line - len(func.body_lines) + 1 + i
                 results.append(

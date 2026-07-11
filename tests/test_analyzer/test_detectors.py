@@ -9,6 +9,7 @@ from guardian.analyzer.vyper_detector import (
     RECOMMENDED_DETECTORS,
     CEIViolationDetector,
     DangerousDelegatecallDetector,
+    DivisionBeforeMultiplicationDetector,
     IncorrectERC20ReturnDetector,
     IntegerOverflowDetector,
     MissingEventEmissionDetector,
@@ -1292,6 +1293,19 @@ def mint(amount: uint256):
         results = _run_detector(UnprotectedStateChangeDetector, source)
         assert len(results) == 0
 
+    def test_user_scoped_withdraw_can_reduce_supply(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+supply: uint256
+locked: HashMap[address, uint256]
+@external
+def withdraw():
+    amount: uint256 = self.locked[msg.sender]
+    self.locked[msg.sender] = 0
+    self.supply -= amount
+"""
+        assert _run_detector(UnprotectedStateChangeDetector, source) == []
+
 
 # -------------------------------------------------------------------------
 # False-positive suppression tests
@@ -1656,6 +1670,16 @@ def checkpoint():
 """
         assert _run_detector(WeakRandomnessDetector, source) == []
 
+    def test_time_bucket_rounding_is_not_precision_loss(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+WEEK: constant(uint256) = 604800
+@external
+def bucket(value: uint256) -> uint256:
+    return (value / WEEK) * WEEK
+"""
+        assert _run_detector(DivisionBeforeMultiplicationDetector, source) == []
+
     def test_shadowed_state_variable_flags_local_shadow(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -1668,6 +1692,17 @@ def update():
 """
         results = _run_detector(ShadowedStateVariableDetector, source)
         assert len(results) == 1
+
+    def test_local_cache_of_state_variable_is_not_shadowing(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+token: address
+@external
+def use_token():
+    token: address = self.token
+    assert token != empty(address)
+"""
+        assert _run_detector(ShadowedStateVariableDetector, source) == []
 
     def test_immutable_initialization_is_not_shadowing(self) -> None:
         source = """\
