@@ -6,7 +6,9 @@ from collections import Counter
 from pathlib import Path
 
 from rich import box
+from rich.columns import Columns
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -21,16 +23,37 @@ _SEVERITY_STYLES: dict[Severity, str] = {
     Severity.INFO: "dim",
 }
 
+_SEVERITY_BORDERS: dict[Severity, str] = {
+    Severity.CRITICAL: "red",
+    Severity.HIGH: "bright_red",
+    Severity.MEDIUM: "yellow",
+    Severity.LOW: "cyan",
+    Severity.INFO: "dim",
+}
+
+
 def print_report(report: AnalysisReport, *, console: Console | None = None) -> None:
     """Render an ``AnalysisReport`` to the terminal using Rich."""
     con = console or Console(stderr=True)
 
     # ── Header ───────────────────────────────────────────────────
     filename = Path(report.file_path).name
-    con.print(f"[bold]Vyper Guard v{__version__}[/bold]")
-    con.print(f"File: {filename}")
-    if report.vyper_version:
-        con.print(f"Pragma: [dim]{report.vyper_version}[/dim]")
+    metadata = Table.grid(padding=(0, 2))
+    metadata.add_column(style="bold", width=10)
+    metadata.add_column()
+    metadata.add_row("File", filename)
+    metadata.add_row("Path", report.file_path)
+    metadata.add_row("Pragma", report.vyper_version or "not declared")
+    metadata.add_row("Detectors", str(len(report.detectors_run)))
+    con.print(
+        Panel(
+            metadata,
+            title=f"[bold]Vyper Guard v{__version__}[/bold]",
+            title_align="left",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+    )
 
     # ── Score card ───────────────────────────────────────────────
     score = report.security_score
@@ -38,9 +61,42 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     score_colour = "green" if score >= 75 else "yellow" if score >= 45 else "red"
     trust = report.analysis_context.get("analysis_trust", {})
     trust_level = trust.get("level", "unknown") if isinstance(trust, dict) else "unknown"
+    filled = max(0, min(20, score // 5))
+    score_bar = Text()
+    score_bar.append("■" * filled, style=score_colour)
+    score_bar.append("□" * (20 - filled), style="dim")
+    score_table = Table.grid(expand=True)
+    score_table.add_column(ratio=1)
+    score_table.add_row(Text(f"{score}/100", style=f"bold {score_colour}"))
+    score_table.add_row(score_bar)
+    score_table.add_row(Text(f"Grade {grade_val}: {report.grade.label}"))
+    score_table.add_row(Text(f"Analysis trust: {trust_level}", style="dim"))
+
+    counts: Counter[Severity] = Counter(f.severity for f in report.findings)
+    severity_table = Table.grid(padding=(0, 2), expand=True)
+    severity_table.add_column(ratio=1)
+    severity_table.add_column(justify="right", width=6)
+    for severity in (
+        Severity.CRITICAL,
+        Severity.HIGH,
+        Severity.MEDIUM,
+        Severity.LOW,
+        Severity.INFO,
+    ):
+        severity_table.add_row(
+            Text(severity.value, style=_SEVERITY_STYLES[severity]),
+            str(counts.get(severity, 0)),
+        )
+
     con.print(
-        f"Risk indicator: [{score_colour} bold]{score}/100[/] "
-        f"([bold]{grade_val}[/bold], {report.grade.label}) | Analysis trust: {trust_level}"
+        Columns(
+            [
+                Panel(score_table, title="Risk indicator", border_style=score_colour),
+                Panel(severity_table, title="Severity distribution", border_style="cyan"),
+            ],
+            expand=True,
+            equal=True,
+        )
     )
     con.print()
 
@@ -58,20 +114,6 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         con.print()
         _print_footer(con, report)
         return
-
-    # ── Severity breakdown ───────────────────────────────────────
-    counts: Counter[Severity] = Counter()
-    for f in report.findings:
-        counts[f.severity] += 1
-
-    parts: list[str] = []
-    for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO):
-        n = counts.get(sev, 0)
-        if n > 0:
-            style = _SEVERITY_STYLES[sev]
-            parts.append(f"[{style}]{sev.value} {n}[/]")
-    con.print(" | ".join(parts))
-    con.print()
 
     # ── Findings table ───────────────────────────────────────────
     display_findings = _auditor_findings(report)
@@ -95,7 +137,7 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
         line_str = str(finding.line_number) if finding.line_number else "—"
         table.add_row(sev_text, finding.detector_name, finding.title, line_str)
 
-    con.print(table)
+    con.print(Panel(table, title="Findings", title_align="left", border_style="cyan"))
     omitted = len(report.findings) - len(display_findings)
     if omitted:
         con.print(
@@ -105,21 +147,41 @@ def print_report(report: AnalysisReport, *, console: Console | None = None) -> N
     con.print()
 
     # ── Detailed findings ────────────────────────────────────────
-    for finding in display_findings:
-        style = _SEVERITY_STYLES[finding.severity]
-        con.print(f"[{style}]{finding.severity.value}[/]  {finding.title}")
-        con.print(f"    [dim]{finding.description}[/dim]")
+    for index, finding in enumerate(display_findings, start=1):
+        detail = Table.grid(padding=(0, 1), expand=True)
+        detail.add_column(style="bold", width=14)
+        detail.add_column(ratio=1)
+        detail.add_row("Detector", finding.detector_name)
+        detail.add_row("Confidence", finding.confidence.value)
+        detail.add_row("Location", _finding_location(finding))
+        detail.add_row("Description", finding.description)
         if finding.source_snippet:
-            con.print("    [dim]Source:[/dim]")
-            for snippet_line in finding.source_snippet.splitlines()[:8]:
-                con.print(f"      [dim]{snippet_line}[/dim]")
+            source = "\n".join(finding.source_snippet.splitlines()[:8])
+            detail.add_row("Source", Text(source, style="dim"))
         if finding.fix_suggestion:
-            con.print(f"    [green]Remediation:[/green] {finding.fix_suggestion}")
+            detail.add_row("Remediation", Text(finding.fix_suggestion, style="green"))
+        con.print(
+            Panel(
+                detail,
+                title=f"[bold]#{index} {finding.severity.value}[/bold]  {finding.title}",
+                title_align="left",
+                border_style=_SEVERITY_BORDERS[finding.severity],
+                padding=(0, 1),
+            )
+        )
         if finding.exploit_verification:
             _print_exploit_verification(con, finding.exploit_verification)
         con.print()
 
     _print_footer(con, report)
+
+
+def _finding_location(finding: DetectorResult) -> str:
+    if not finding.line_number:
+        return "not available"
+    if finding.end_line_number and finding.end_line_number != finding.line_number:
+        return f"lines {finding.line_number}-{finding.end_line_number}"
+    return f"line {finding.line_number}"
 
 
 def _auditor_findings(report: AnalysisReport, limit: int = 12) -> list[DetectorResult]:

@@ -1,27 +1,42 @@
-Vyper Guard v<VERSION>
-File: sample.vy
-Pragma: ^0.4.0
-Risk indicator: 77/100 (A, Limited detected heuristic risk) | Analysis trust: unknown
+╭─ Vyper Guard v<VERSION> ─────────────────────────────────────────────────────────────────────────────╮
+│ File        sample.vy                                                                            │
+│ Path        contracts/sample.vy                                                                  │
+│ Pragma      ^0.4.0                                                                               │
+│ Detectors   2                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────── Risk indicator ─────────────╮                   ╭────── Severity distribution ──────╮
+│ 77/100                                   │                   │ CRITICAL                        0 │
+│ ■■■■■■■■■■■■■■■□□□□□                     │                   │ HIGH                            1 │
+│ Grade A: Limited detected heuristic risk │                   │ MEDIUM                          0 │
+│ Analysis trust: unknown                  │                   │ LOW                             1 │
+╰──────────────────────────────────────────╯                   │ INFO                            0 │
+                                                               ╰───────────────────────────────────╯
 
-HIGH 1 | LOW 1
+╭─ Findings ───────────────────────────────────────────────────────────────────────────────────────╮
+│ ╭────────────┬────────────────────────────┬───────────────────────────────────────────┬────────╮ │
+│ │    Sev     │ Detector                   │ Title                                     │   Line │ │
+│ ├────────────┼────────────────────────────┼───────────────────────────────────────────┼────────┤ │
+│ │    HIGH    │ unsafe_raw_call            │ Unchecked raw_call in withdraw()          │     12 │ │
+│ │    LOW     │ timestamp_dependence       │ Timestamp dependence in settle()          │     30 │ │
+│ ╰────────────┴────────────────────────────┴───────────────────────────────────────────┴────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-╭────────────┬────────────────────────────┬───────────────────────────────────────────────┬────────╮
-│    Sev     │ Detector                   │ Title                                         │   Line │
-├────────────┼────────────────────────────┼───────────────────────────────────────────────┼────────┤
-│    HIGH    │ unsafe_raw_call            │ Unchecked raw_call in withdraw()              │     12 │
-│    LOW     │ timestamp_dependence       │ Timestamp dependence in settle()              │     30 │
-╰────────────┴────────────────────────────┴───────────────────────────────────────────────┴────────╯
+╭─ #1 HIGH  Unchecked raw_call in withdraw() ──────────────────────────────────────────────────────╮
+│ Detector       unsafe_raw_call                                                                   │
+│ Confidence     MEDIUM                                                                            │
+│ Location       line 12                                                                           │
+│ Description    raw_call return value is not checked.                                             │
+│ Source         raw_call(msg.sender, b"", value=amount)                                           │
+│ Remediation    Wrap raw_call in assert.                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-HIGH  Unchecked raw_call in withdraw()
-    raw_call return value is not checked.
-    Source:
-      raw_call(msg.sender, b"", value=amount)
-    Remediation: Wrap raw_call in assert.
-
-LOW  Timestamp dependence in settle()
-    block.timestamp used in condition.
-    Source:
-      if block.timestamp > self.deadline:
-    Remediation: Use oracle/time-window checks.
+╭─ #2 LOW  Timestamp dependence in settle() ───────────────────────────────────────────────────────╮
+│ Detector       timestamp_dependence                                                              │
+│ Confidence     MEDIUM                                                                            │
+│ Location       line 30                                                                           │
+│ Description    block.timestamp used in condition.                                                │
+│ Source         if block.timestamp > self.deadline:                                               │
+│ Remediation    Use oracle/time-window checks.                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 Detectors run: 2 | Findings: 2
