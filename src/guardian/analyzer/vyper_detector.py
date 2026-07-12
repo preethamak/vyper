@@ -281,8 +281,7 @@ class MissingNonreentrantDetector(BaseDetector):
                     continue
                 sites = external_call_sites(contract, f)
                 if any(
-                    site.callback_capable
-                    and site.target_trust in {"caller_controlled", "unknown"}
+                    site.callback_capable and site.target_trust in {"caller_controlled", "unknown"}
                     for site in sites
                 ):
                     return True
@@ -1299,8 +1298,7 @@ class CEIViolationDetector(BaseDetector):
                 path_evidence = tuple(
                     path
                     for path in analyze_function_paths(func, contract).call_paths
-                    if path.mutability not in {"view", "pure"}
-                    and path.target_trust != "fixed"
+                    if path.mutability not in {"view", "pure"} and path.target_trust != "fixed"
                 )
                 if not path_evidence:
                     continue
