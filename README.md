@@ -1,6 +1,7 @@
 # Vyper Guard
 
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/vyper-guard?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=ORANGE&left_text=downloads)](https://pepy.tech/projects/vyper-guard)
+[![Socket Badge](https://badge.socket.dev/pypi/package/vyper-guard/0.5.1?artifact_id=tar-gz)](https://badge.socket.dev/pypi/package/vyper-guard/0.5.1?artifact_id=tar-gz)
 
 **Static security analyzer for Vyper smart contracts.**
 
