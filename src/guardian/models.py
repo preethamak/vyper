@@ -123,7 +123,7 @@ class FunctionInfo(BaseModel):
 
     @property
     def is_view(self) -> bool:
-        return "view" in self.decorators
+        return "view" in self.decorators or "constant" in self.decorators
 
     @property
     def is_pure(self) -> bool:

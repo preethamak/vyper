@@ -12,9 +12,27 @@
 - Supported benchmark locations: 13
 - Locations rediscovered: 9
 - Supported-case recall: 69.2%
-- Scanner candidates: 72
-- Unreviewed candidates: 63
-- Precision: not measured; candidates have not been independently reviewed
+- Scanner candidates: 37
+- Unreviewed candidates: 0
+- Strict finding precision: 24.3%
+- Review status: complete_internal_review
+- Independent review: no
+- Confirmed new issues: 0
+- Known issues rediscovered: 9
+- Audit-related observations: 5
+- Hardening recommendations: 9
+- False positives: 14
+- False-positive rate: 37.8%
+
+## Validated detector scope
+
+- Detectors: `missing_event_emission`
+- Findings: 16
+- Recall: 69.2%
+- Strict precision: 56.2%
+- Actionable observation rate: 81.2%
+- False positives: 3
+- Review is internal, not independent
 
 ## Supported cases
 
@@ -38,15 +56,11 @@
 
 | Detector | Maturity | Cases | Rediscovered | Recall | Candidates | Precision |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| `cei_violation` | experimental | 0 | 0 | n/a | 16 | not measured |
-| `missing_event_emission` | experimental | 13 | 9 | 69.2% | 24 | not measured |
-| `missing_input_validation` | experimental | 0 | 0 | n/a | 3 | not measured |
-| `missing_nonreentrant` | experimental | 0 | 0 | n/a | 3 | not measured |
-| `missing_zero_address_check` | experimental | 0 | 0 | n/a | 14 | not measured |
-| `send_in_loop` | experimental | 0 | 0 | n/a | 3 | not measured |
-| `tx_origin_auth` | supported | 0 | 0 | n/a | 1 | not measured |
-| `unchecked_subtraction` | experimental | 0 | 0 | n/a | 7 | not measured |
-| `unprotected_state_change` | experimental | 0 | 0 | n/a | 1 | not measured |
+| `missing_event_emission` | experimental | 13 | 9 | 69.2% | 16 | 56.2% |
+| `missing_input_validation` | experimental | 0 | 0 | n/a | 3 | 0.0% |
+| `missing_zero_address_check` | experimental | 0 | 0 | n/a | 10 | 0.0% |
+| `tx_origin_auth` | supported | 0 | 0 | n/a | 1 | 0.0% |
+| `unchecked_subtraction` | experimental | 0 | 0 | n/a | 7 | 0.0% |
 
 ## Interpretation
 

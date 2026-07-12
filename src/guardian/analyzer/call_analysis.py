@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 from guardian.models import ContractInfo, FunctionInfo
 
-_INTERFACE_START_RE = re.compile(r"^interface\s+([A-Za-z_]\w*)\s*:")
+_INTERFACE_START_RE = re.compile(r"^(?:interface|contract)\s+([A-Za-z_]\w*)\s*:")
 _INTERFACE_METHOD_RE = re.compile(
     r"^\s*def\s+([A-Za-z_]\w*)\s*\([^)]*\)(?:\s*->\s*[^:]+)?\s*:\s*"
-    r"(view|pure|nonpayable|payable)\b"
+    r"(view|pure|nonpayable|payable|constant|modifying)\b"
 )
 _INTERFACE_CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(([^()\n]+)\)\s*\.\s*([A-Za-z_]\w*)\s*\(")
 _LOW_LEVEL_RE = re.compile(r"\b(send|raw_call)\s*\(\s*([^,\n)]+)")
@@ -57,7 +57,10 @@ def interface_mutability(contract: ContractInfo) -> dict[tuple[str, str], str]:
             continue
         method = _INTERFACE_METHOD_RE.match(line)
         if method:
-            result[(current, method.group(1))] = method.group(2)
+            mutability = {"constant": "view", "modifying": "nonpayable"}.get(
+                method.group(2), method.group(2)
+            )
+            result[(current, method.group(1))] = mutability
     return result
 
 

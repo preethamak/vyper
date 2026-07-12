@@ -84,7 +84,7 @@ def test_audited_benchmark_reports_coverage_and_case_recall(tmp_path: Path) -> N
     assert detector["recall"] == 1.0
     assert detector["precision"] is None
     assert detector["promotion_status"] == "insufficient_reviewed_evidence"
-    assert "Precision: not measured" in render_markdown(result)
+    assert "Strict finding precision: not measured" in render_markdown(result)
 
 
 def test_audited_benchmark_rejects_source_hash_mismatch(tmp_path: Path) -> None:
@@ -94,3 +94,49 @@ def test_audited_benchmark_rejects_source_hash_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         _verify_sources(engagement, source_dir)
+
+
+def test_candidate_reviews_must_cover_every_unreviewed_finding(tmp_path: Path) -> None:
+    engagement, source_dir = _engagement(tmp_path)
+    preliminary = run(engagement, source_dir)
+    unreviewed_detectors = {
+        finding["detector"]
+        for finding in preliminary["candidates"]
+        if finding["review_status"] == "unreviewed"
+    }
+    reviews = tmp_path / "reviews.json"
+    reviews.write_text(
+        json.dumps(
+            {
+                "$schema": "vyper-guard-candidate-reviews/v1",
+                "engagement_id": "test-engagement",
+                "reviewed_at": "2026-01-02",
+                "reviewer": "internal reviewer",
+                "independent": False,
+                "groups": [
+                    {
+                        "id": f"review-{detector}",
+                        "classification": "false_positive",
+                        "match": {"detector": detector},
+                        "evidence": "Reviewed against the synthetic source.",
+                    }
+                    for detector in sorted(unreviewed_detectors)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run(engagement, source_dir, reviews)
+
+    assert result["review"]["status"] == "complete_internal_review"
+    assert result["summary"]["unreviewed_candidates"] == 0
+    assert result["summary"]["false_positives"] == len(
+        [
+            finding
+            for finding in preliminary["candidates"]
+            if finding["review_status"] == "unreviewed"
+        ]
+    )
+    assert result["validated_scope"]["detectors"] == ["missing_event_emission"]
+    assert result["validated_scope"]["review_independent"] is False

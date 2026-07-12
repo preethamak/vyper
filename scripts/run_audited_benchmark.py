@@ -78,7 +78,149 @@ def _finding_payload(file_name: str, finding: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run(engagement_path: Path, source_dir: Path) -> dict[str, Any]:
+def _group_matches(group: dict[str, Any], finding: dict[str, Any]) -> bool:
+    match = group.get("match", {})
+    if not isinstance(match, dict) or match.get("detector") != finding["detector"]:
+        return False
+    locations = match.get("locations")
+    if locations is None:
+        return True
+    if not isinstance(locations, list):
+        raise ValueError(f"review group {group.get('id')} locations must be a list")
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        if location.get("file") != finding["file"]:
+            continue
+        if location.get("function") != finding["function"]:
+            continue
+        if "line" in location and location["line"] != finding["line"]:
+            continue
+        return True
+    return False
+
+
+def _apply_candidate_reviews(result: dict[str, Any], reviews_path: Path) -> None:
+    reviews = json.loads(reviews_path.read_text(encoding="utf-8"))
+    if reviews.get("$schema") != "vyper-guard-candidate-reviews/v1":
+        raise ValueError("unsupported candidate review schema")
+    if reviews.get("engagement_id") != result["engagement"]["id"]:
+        raise ValueError("candidate reviews target a different engagement")
+    groups = reviews.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise ValueError("candidate review groups are required")
+
+    for finding in result["candidates"]:
+        if finding["review_status"] != "unreviewed":
+            continue
+        matches = [group for group in groups if _group_matches(group, finding)]
+        if len(matches) != 1:
+            raise ValueError(
+                f"candidate review coverage must match exactly once: {finding['file']}:"
+                f"{finding['line']} {finding['detector']} matched {len(matches)} groups"
+            )
+        group = matches[0]
+        finding["review_status"] = group["classification"]
+        finding["review"] = {
+            "group_id": group["id"],
+            "reviewer": reviews["reviewer"],
+            "reviewed_at": reviews["reviewed_at"],
+            "independent": bool(reviews.get("independent", False)),
+            "evidence": group["evidence"],
+            "audit_reference": group.get("audit_reference"),
+        }
+
+    counts = Counter(finding["review_status"] for finding in result["candidates"])
+    total = len(result["candidates"])
+    confirmed = counts["known_issue_rediscovered"] + counts["confirmed_issue"]
+    actionable = confirmed + counts["known_audit_related"] + counts["hardening_recommendation"]
+    result["review"] = {
+        "status": "complete_internal_review",
+        "reviewer": reviews["reviewer"],
+        "reviewed_at": reviews["reviewed_at"],
+        "independent": bool(reviews.get("independent", False)),
+        "limitations": reviews.get("limitations"),
+        "classifications": dict(sorted(counts.items())),
+    }
+    result["summary"].update(
+        {
+            "unreviewed_candidates": counts["unreviewed"],
+            "confirmed_new_issues": counts["confirmed_issue"],
+            "known_issues_rediscovered": counts["known_issue_rediscovered"],
+            "known_audit_related": counts["known_audit_related"],
+            "hardening_recommendations": counts["hardening_recommendation"],
+            "false_positives": counts["false_positive"],
+            "strict_finding_precision": confirmed / total if total else None,
+            "actionable_observation_rate": actionable / total if total else None,
+            "false_positive_rate": counts["false_positive"] / total if total else None,
+            "precision": confirmed / total if total else None,
+        }
+    )
+    result["method"]["candidate_review_status"] = "complete_internal_review"
+    for detector in result["detectors"]:
+        detector_findings = [
+            finding
+            for finding in result["candidates"]
+            if finding["detector"] == detector["detector"]
+        ]
+        detector_counts = Counter(finding["review_status"] for finding in detector_findings)
+        detector_total = len(detector_findings)
+        detector_confirmed = (
+            detector_counts["known_issue_rediscovered"] + detector_counts["confirmed_issue"]
+        )
+        detector["unreviewed_candidates"] = detector_counts["unreviewed"]
+        detector["false_positives"] = detector_counts["false_positive"]
+        detector["hardening_recommendations"] = detector_counts["hardening_recommendation"]
+        detector["known_audit_related"] = detector_counts["known_audit_related"]
+        detector["precision"] = (
+            detector_confirmed / detector_total if detector_total else None
+        )
+        detector_actionable = (
+            detector_confirmed
+            + detector_counts["known_audit_related"]
+            + detector_counts["hardening_recommendation"]
+        )
+        detector["actionable_observation_rate"] = (
+            detector_actionable / detector_total if detector_total else None
+        )
+
+    validated_detectors = [
+        detector for detector in result["detectors"] if detector["supported_cases"] > 0
+    ]
+    validated_names = {detector["detector"] for detector in validated_detectors}
+    validated_findings = [
+        finding for finding in result["candidates"] if finding["detector"] in validated_names
+    ]
+    validated_counts = Counter(finding["review_status"] for finding in validated_findings)
+    validated_total = len(validated_findings)
+    validated_confirmed = (
+        validated_counts["known_issue_rediscovered"] + validated_counts["confirmed_issue"]
+    )
+    validated_actionable = (
+        validated_confirmed
+        + validated_counts["known_audit_related"]
+        + validated_counts["hardening_recommendation"]
+    )
+    result["validated_scope"] = {
+        "detectors": sorted(validated_names),
+        "scanner_findings": validated_total,
+        "known_issues_rediscovered": validated_counts["known_issue_rediscovered"],
+        "hardening_recommendations": validated_counts["hardening_recommendation"],
+        "false_positives": validated_counts["false_positive"],
+        "recall": result["summary"]["supported_case_recall"],
+        "strict_finding_precision": (
+            validated_confirmed / validated_total if validated_total else None
+        ),
+        "actionable_observation_rate": (
+            validated_actionable / validated_total if validated_total else None
+        ),
+        "review_independent": bool(reviews.get("independent", False)),
+    }
+
+
+def run(
+    engagement_path: Path, source_dir: Path, reviews_path: Path | None = None
+) -> dict[str, Any]:
     engagement = _load_engagement(engagement_path)
     sources = _verify_sources(engagement, source_dir)
     analyzer = StaticAnalyzer(severity_threshold=Severity.LOW, semantic_mode="source")
@@ -171,7 +313,7 @@ def run(engagement_path: Path, source_dir: Path) -> dict[str, Any]:
             }
         )
 
-    return {
+    result = {
         "$schema": "vyper-guard-public-benchmark/v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "tool": {"name": "vyper-guard", "version": __version__},
@@ -218,6 +360,9 @@ def run(engagement_path: Path, source_dir: Path) -> dict[str, Any]:
         "cases": cases,
         "candidates": findings,
     }
+    if reviews_path is not None:
+        _apply_candidate_reviews(result, reviews_path)
+    return result
 
 
 def render_markdown(result: dict[str, Any]) -> str:
@@ -225,6 +370,8 @@ def render_markdown(result: dict[str, Any]) -> str:
     summary = result["summary"]
     recall = summary["supported_case_recall"]
     recall_text = "not measurable" if recall is None else f"{recall:.1%}"
+    precision = summary["precision"]
+    precision_text = "not measured" if precision is None else f"{precision:.1%}"
     lines = [
         f"# {engagement['protocol']} benchmark",
         "",
@@ -242,13 +389,47 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- Supported-case recall: {recall_text}",
         f"- Scanner candidates: {summary['scanner_findings_total']}",
         f"- Unreviewed candidates: {summary['unreviewed_candidates']}",
-        "- Precision: not measured; candidates have not been independently reviewed",
-        "",
-        "## Supported cases",
-        "",
-        "| Case | File | Function | Detector | Result |",
-        "| --- | --- | --- | --- | --- |",
+        f"- Strict finding precision: {precision_text}",
     ]
+    if result.get("review"):
+        review = result["review"]
+        lines.extend(
+            [
+                f"- Review status: {review['status']}",
+                f"- Independent review: {'yes' if review['independent'] else 'no'}",
+                f"- Confirmed new issues: {summary['confirmed_new_issues']}",
+                f"- Known issues rediscovered: {summary['known_issues_rediscovered']}",
+                f"- Audit-related observations: {summary['known_audit_related']}",
+                f"- Hardening recommendations: {summary['hardening_recommendations']}",
+                f"- False positives: {summary['false_positives']}",
+                f"- False-positive rate: {summary['false_positive_rate']:.1%}",
+            ]
+        )
+        validated = result.get("validated_scope")
+        if isinstance(validated, dict):
+            lines.extend(
+                [
+                    "",
+                    "## Validated detector scope",
+                    "",
+                    f"- Detectors: {', '.join(f'`{name}`' for name in validated['detectors'])}",
+                    f"- Findings: {validated['scanner_findings']}",
+                    f"- Recall: {validated['recall']:.1%}",
+                    f"- Strict precision: {validated['strict_finding_precision']:.1%}",
+                    f"- Actionable observation rate: {validated['actionable_observation_rate']:.1%}",
+                    f"- False positives: {validated['false_positives']}",
+                    "- Review is internal, not independent",
+                ]
+            )
+    lines.extend(
+        [
+            "",
+            "## Supported cases",
+            "",
+            "| Case | File | Function | Detector | Result |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
     for case in result["cases"]:
         lines.append(
             f"| {case['id']} | `{case['file']}` | `{case['function']}` | "
@@ -266,10 +447,15 @@ def render_markdown(result: dict[str, Any]) -> str:
     for detector in result["detectors"]:
         detector_recall = detector["recall"]
         detector_recall_text = "n/a" if detector_recall is None else f"{detector_recall:.1%}"
+        detector_precision = detector["precision"]
+        detector_precision_text = (
+            "not measured" if detector_precision is None else f"{detector_precision:.1%}"
+        )
         lines.append(
             f"| `{detector['detector']}` | {detector['maturity']} | "
             f"{detector['supported_cases']} | {detector['rediscovered_cases']} | "
-            f"{detector_recall_text} | {detector['scanner_findings']} | not measured |"
+            f"{detector_recall_text} | {detector['scanner_findings']} | "
+            f"{detector_precision_text} |"
         )
     lines.extend(
         [
@@ -289,11 +475,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("engagement", type=Path)
     parser.add_argument("--source-dir", type=Path, required=True)
+    parser.add_argument("--reviews", type=Path)
     parser.add_argument("--json-output", type=Path)
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
 
-    result = run(args.engagement.resolve(), args.source_dir.resolve())
+    result = run(
+        args.engagement.resolve(),
+        args.source_dir.resolve(),
+        args.reviews.resolve() if args.reviews else None,
+    )
     json_text = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
     markdown_text = render_markdown(result)
     if args.json_output:

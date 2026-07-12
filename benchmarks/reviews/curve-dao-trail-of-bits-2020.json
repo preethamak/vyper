@@ -1,0 +1,120 @@
+{
+  "$schema": "vyper-guard-candidate-reviews/v1",
+  "engagement_id": "curve-dao-trail-of-bits-2020",
+  "reviewed_at": "2026-07-12",
+  "reviewer": "Vyper Guard maintainer review",
+  "independent": false,
+  "limitations": "Internal source review only. No fork reproduction or protocol-team confirmation was performed. Hardening recommendations are not vulnerabilities.",
+  "groups": [
+    {
+      "id": "cei-fixed-or-governance-targets",
+      "classification": "false_positive",
+      "match": {"detector": "cei_violation"},
+      "evidence": "The reported calls target configured Curve system contracts; Minter.mint and PoolProxy.set_burner are nonreentrant. No caller-controlled callback target or demonstrated invariant violation is present.",
+      "audit_reference": "Trail of Bits report pages 3-7 describes the system components and trust relationships."
+    },
+    {
+      "id": "checked-arithmetic",
+      "classification": "false_positive",
+      "match": {"detector": "unchecked_subtraction"},
+      "evidence": "The audited Vyper arithmetic reverts on underflow. ERC20 balance and allowance reductions rely on checked arithmetic; scheduled signed slope changes are intentionally allowed to be negative.",
+      "audit_reference": "Trail of Bits report page 5 states that Vyper prevents overflow and underflow flaws."
+    },
+    {
+      "id": "caller-owned-burn",
+      "classification": "false_positive",
+      "match": {"detector": "unprotected_state_change"},
+      "evidence": "ERC20CRV.burn reduces msg.sender's own balance and total supply. It does not permit changing another account's balance or privileged state."
+    },
+    {
+      "id": "intentional-zero-value-token-operations",
+      "classification": "false_positive",
+      "match": {"detector": "missing_input_validation"},
+      "evidence": "Zero-value deposit and withdrawal calls do not create value or bypass balance checks. Nonzero over-withdrawals revert through checked subtraction."
+    },
+    {
+      "id": "nonreentrant-without-attacker-callback",
+      "classification": "false_positive",
+      "match": {"detector": "missing_nonreentrant"},
+      "evidence": "The GaugeController functions expose bookkeeping updates and fixed-system calls, not caller-controlled callback targets. No reentrant asset-transfer path was demonstrated."
+    },
+    {
+      "id": "missing-event-hardening",
+      "classification": "hardening_recommendation",
+      "match": {
+        "detector": "missing_event_emission",
+        "locations": [
+          {"file": "ERC20CRV.vy", "function": "set_name"},
+          {"file": "GaugeController.vy", "function": "add_gauge"},
+          {"file": "GaugeController.vy", "function": "add_type"},
+          {"file": "VotingEscrow.vy", "function": "changeController"}
+        ]
+      },
+      "evidence": "These privileged configuration changes mutate operationally important state without a dedicated event. This is useful monitoring hardening, but no direct exploit was established.",
+      "audit_reference": "Related to the monitoring rationale in TOB-CURVE-DAO-013, but these locations were not listed by Trail of Bits."
+    },
+    {
+      "id": "missing-event-bookkeeping",
+      "classification": "false_positive",
+      "match": {
+        "detector": "missing_event_emission",
+        "locations": [
+          {"file": "GaugeController.vy", "function": "period_write"},
+          {"file": "GaugeController.vy", "function": "gauge_relative_weight_write"},
+          {"file": "Minter.vy", "function": "mint"}
+        ]
+      },
+      "evidence": "The GaugeController functions materialize checkpoint state rather than changing governance configuration. Minter.mint causes the token contract to emit the observable mint Transfer event."
+    },
+    {
+      "id": "ownership-zero-address-audit-related",
+      "classification": "known_audit_related",
+      "match": {
+        "detector": "missing_zero_address_check",
+        "locations": [
+          {"file": "GaugeController.vy", "function": "transfer_ownership"},
+          {"file": "PoolProxy.vy", "function": "set_admins"},
+          {"file": "VotingEscrow.vy", "function": "transfer_ownership"}
+        ]
+      },
+      "evidence": "A zero administrator can make privileged control unrecoverable. The detector identifies a concrete failure mode, but not Trail of Bits' broader requirement for a two-step administrative transfer.",
+      "audit_reference": "TOB-CURVE-DAO-011"
+    },
+    {
+      "id": "zero-address-hardening",
+      "classification": "hardening_recommendation",
+      "match": {
+        "detector": "missing_zero_address_check",
+        "locations": [
+          {"file": "ERC20CRV.vy", "function": "set_minter"},
+          {"file": "ERC20CRV.vy", "function": "set_admin"},
+          {"file": "GaugeController.vy", "function": "add_gauge", "line": 130},
+          {"file": "VotingEscrow.vy", "function": "changeController"}
+        ]
+      },
+      "evidence": "Rejecting zero for these role or contract-address assignments prevents accidental disabling or unusable configuration. No unprivileged exploit path was established."
+    },
+    {
+      "id": "zero-address-non-address-storage",
+      "classification": "false_positive",
+      "match": {
+        "detector": "missing_zero_address_check",
+        "locations": [
+          {"file": "ERC20CRV.vy", "function": "approve"},
+          {"file": "GaugeController.vy", "function": "_change_gauge_weight"},
+          {"file": "GaugeController.vy", "function": "add_gauge", "line": 132},
+          {"file": "GaugeController.vy", "function": "add_gauge", "line": 155},
+          {"file": "PoolProxy.vy", "function": "set_burner"}
+        ]
+      },
+      "evidence": "The flagged writes are allowance/weight mappings or deliberate zero-as-disable behavior, not unchecked assignment of a required address role."
+    },
+    {
+      "id": "tx-origin-composability",
+      "classification": "hardening_recommendation",
+      "match": {"detector": "tx_origin_auth"},
+      "evidence": "assert_not_contract deliberately compares msg.sender and tx.origin to restrict contract callers. This is a real composability and account-abstraction limitation, but it is not an authentication bypass in this function.",
+      "audit_reference": "Related to VotingEscrow whitelist design discussed in TOB-CURVE-DAO-009 and TOB-CURVE-DAO-014."
+    }
+  ]
+}

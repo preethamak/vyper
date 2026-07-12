@@ -36,7 +36,7 @@ _DELEGATE_CALL_RE = re.compile(
     r"\braw_call\s*\(.*?is_delegate_call\s*=\s*(?:True|true|1)\b",
     re.DOTALL,
 )
-_EVENT_LOG_RE = re.compile(r"\blog\s+\w+")
+_EVENT_LOG_RE = re.compile(r"\blog(?:\s+|\.)\w+")
 _DYNARRAY_IN_MAPPING_RE = re.compile(
     r"HashMap\s*\[.*?,\s*DynArray\s*\[",
     re.IGNORECASE | re.DOTALL,

@@ -149,6 +149,26 @@ def set_count(v: uint256):
         results = _run_detector(MissingNonreentrantDetector, source)
         assert len(results) == 0
 
+    def test_constructor_call_is_not_runtime_cross_function_surface(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Registry:
+    def register(): nonpayable
+
+count: uint256
+
+@deploy
+def __init__(registry: address):
+    Registry(registry).register()
+
+@external
+def increment():
+    self.count += 1
+"""
+        results = _run_detector(MissingNonreentrantDetector, source)
+        assert results == []
+
     def test_external_call_without_state_mutation_is_not_reentrancy(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -642,6 +662,23 @@ def set_owner(new_owner: address):
         assert len(results) == 1
         assert "set_owner" in results[0].title
 
+    def test_legacy_event_syntax_suppresses_missing_event(self) -> None:
+        source = """\
+# @version ^0.1.0-beta.17
+
+owner: address
+
+event OwnerChanged:
+    owner: address
+
+@public
+def set_owner(new_owner: address):
+    self.owner = new_owner
+    log.OwnerChanged(new_owner)
+"""
+        results = _run_detector(MissingEventEmissionDetector, source)
+        assert results == []
+
     def test_deploy_init_not_flagged_for_missing_event(self) -> None:
         source = """\
 # pragma version ^0.4.0
@@ -1133,7 +1170,7 @@ def withdraw(amount: uint256):
         assert results[0].severity == Severity.HIGH
         assert "CEI" in results[0].title
 
-    def test_nonreentrant_cei_violation_is_downgraded(self) -> None:
+    def test_nonreentrant_cei_violation_is_suppressed(self) -> None:
         source = """\
 # pragma version ^0.4.0
 
@@ -1146,8 +1183,29 @@ def withdraw(amount: uint256):
     self.balances[msg.sender] -= amount
 """
         results = _run_detector(CEIViolationDetector, source)
-        assert len(results) == 1
-        assert results[0].severity == Severity.LOW
+        assert results == []
+
+    def test_fixed_protocol_target_is_not_a_reentrancy_candidate(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Controller:
+    def checkpoint(): nonpayable
+
+controller: address
+period: uint256
+
+@deploy
+def __init__(controller: address):
+    self.controller = controller
+
+@external
+def checkpoint():
+    Controller(self.controller).checkpoint()
+    self.period += 1
+"""
+        results = _run_detector(CEIViolationDetector, source)
+        assert results == []
 
     def test_no_flag_when_effects_before_interaction(self) -> None:
         source = """\
@@ -1317,6 +1375,18 @@ def withdraw():
     amount: uint256 = self.locked[msg.sender]
     self.locked[msg.sender] = 0
     self.supply -= amount
+"""
+        assert _run_detector(UnprotectedStateChangeDetector, source) == []
+
+    def test_legacy_erc20_burn_is_user_scoped(self) -> None:
+        source = """\
+# @version ^0.1.0-beta.17
+total_supply: uint256
+balanceOf: map(address, uint256)
+@public
+def burn(value: uint256):
+    self.balanceOf[msg.sender] -= value
+    self.total_supply -= value
 """
         assert _run_detector(UnprotectedStateChangeDetector, source) == []
 
@@ -1658,6 +1728,32 @@ def clear_pending_owner():
 """
         results = _run_detector(MissingZeroAddressCheckDetector, source)
         assert results == []
+
+    def test_address_mapping_key_does_not_make_uint_value_an_address(self) -> None:
+        source = """\
+# pragma version ^0.3.10
+
+weights: HashMap[address, uint256]
+
+@external
+def set_weight(account: address, weight: uint256):
+    self.weights[account] = weight
+"""
+        results = _run_detector(MissingZeroAddressCheckDetector, source)
+        assert results == []
+
+    def test_address_mapping_value_requires_zero_check(self) -> None:
+        source = """\
+# pragma version ^0.3.10
+
+gauges: HashMap[uint256, address]
+
+@external
+def set_gauge(index: uint256, gauge: address):
+    self.gauges[index] = gauge
+"""
+        results = _run_detector(MissingZeroAddressCheckDetector, source)
+        assert len(results) == 1
 
     def test_weak_randomness_flags_random_seed(self) -> None:
         source = """\

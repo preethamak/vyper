@@ -170,7 +170,7 @@ _STATE_MUTATION_CALL_RE = re.compile(
     r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\.(append|pop|remove|clear|extend|insert)\s*\("
 )
 # Matches event emissions (log EventName(...)).
-_LOG_RE = re.compile(r"\blog\s+\w+")
+_LOG_RE = re.compile(r"\blog(?:\s+|\.)\w+")
 # Access-control assertion pattern (strict owner/admin equality).
 _ACCESS_CONTROL_RE = re.compile(
     r"\bassert\b\s+"
@@ -193,7 +193,7 @@ def _is_user_scoped_supply_reduction(func: FunctionInfo, body: str) -> bool:
     )
     user_position = bool(
         re.search(
-            r"\bself\.(?:locked|balances?|shares?)\s*\[\s*msg\.sender\s*\]",
+            r"\bself\.(?:locked|balances?|balanceOf|shares?)\s*\[\s*msg\.sender\s*\]",
             body,
         )
     )
@@ -275,8 +275,16 @@ class MissingNonreentrantDetector(BaseDetector):
             for f in contract.functions:
                 if f.name == exclude_name:
                     continue
+                if f.name in _CONSTRUCTOR_NAMES or "deploy" in f.decorators:
+                    continue
+                if f.is_view or f.is_pure:
+                    continue
                 sites = external_call_sites(contract, f)
-                if any(site.callback_capable for site in sites):
+                if any(
+                    site.callback_capable
+                    and site.target_trust in {"caller_controlled", "unknown"}
+                    for site in sites
+                ):
                     return True
                 if not sites and any(_is_external_call_line(line) for line in f.body_lines):
                     return True
@@ -1265,6 +1273,8 @@ class CEIViolationDetector(BaseDetector):
                 continue
             if func.is_view or func.is_pure:
                 continue
+            if func.is_nonreentrant:
+                continue
 
             fn_sem = semantic.functions.get(func.name)
             if fn_sem is None:
@@ -1290,6 +1300,7 @@ class CEIViolationDetector(BaseDetector):
                     path
                     for path in analyze_function_paths(func, contract).call_paths
                     if path.mutability not in {"view", "pure"}
+                    and path.target_trust != "fixed"
                 )
                 if not path_evidence:
                     continue
@@ -1495,7 +1506,20 @@ class MissingZeroAddressCheckDetector(BaseDetector):
     VULNERABILITY_TYPE = VulnerabilityType.INPUT_VALIDATION
 
     def _address_state_vars(self, contract: ContractInfo) -> set[str]:
-        return {v.name for v in contract.state_variables if "address" in v.type_annotation.lower()}
+        def stores_address(type_annotation: str) -> bool:
+            annotation = type_annotation.split("#", 1)[0].lower().replace(" ", "")
+            if annotation in {"address", "public(address)", "immutable(address)"}:
+                return True
+            if "map(" not in annotation and "hashmap[" not in annotation:
+                return False
+            final_type = annotation.rsplit(",", 1)[-1].rstrip(")] ")
+            return final_type == "address"
+
+        return {
+            variable.name
+            for variable in contract.state_variables
+            if stores_address(variable.type_annotation)
+        }
 
     def detect(self, contract: ContractInfo) -> list[DetectorResult]:
         addr_vars = self._address_state_vars(contract)

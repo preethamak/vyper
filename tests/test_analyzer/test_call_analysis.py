@@ -38,3 +38,47 @@ def execute(target: address):
     site = external_call_sites(contract, contract.functions[0])[0]
     assert site.target_trust == "caller_controlled"
     assert site.callback_capable is True
+
+
+def test_legacy_interface_mutability_is_normalized() -> None:
+    contract = parse_vyper_source(
+        """\
+interface Oracle:
+    def price() -> uint256: constant
+    def update(): modifying
+
+oracle: address
+
+@public
+def refresh():
+    price: uint256 = Oracle(self.oracle).price()
+    Oracle(self.oracle).update()
+""",
+        "legacy.vy",
+    )
+
+    mutability = interface_mutability(contract)
+    assert mutability[("Oracle", "price")] == "view"
+    assert mutability[("Oracle", "update")] == "nonpayable"
+    sites = external_call_sites(contract, contract.functions[0])
+    assert [site.callback_capable for site in sites] == [False, True]
+
+
+def test_legacy_contract_interface_syntax_is_supported() -> None:
+    contract = parse_vyper_source(
+        """\
+contract Oracle:
+    def price() -> uint256: constant
+
+oracle: address
+
+@public
+def read_and_store():
+    self.oracle = Oracle(self.oracle).price()
+""",
+        "legacy.vy",
+    )
+
+    assert interface_mutability(contract)[("Oracle", "price")] == "view"
+    site = external_call_sites(contract, contract.functions[0])[0]
+    assert site.callback_capable is False
