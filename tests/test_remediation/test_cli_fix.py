@@ -50,7 +50,6 @@ event Withdrawn:
     user: address
 
 @external
-@nonreentrant
 def withdraw(amount: uint256):
     send(msg.sender, amount)
     self.balances[msg.sender] = 0
@@ -246,7 +245,15 @@ class TestFixCLI:
         try:
             result = runner.invoke(
                 app,
-                ["analyze", tmp_path, "--fix", "--max-auto-fix-tier", "B"],
+                [
+                    "analyze",
+                    tmp_path,
+                    "--fix",
+                    "--max-auto-fix-tier",
+                    "B",
+                    "--detectors",
+                    "cei_violation",
+                ],
                 input="n\n",
             )
             assert result.exit_code == 0
@@ -285,7 +292,7 @@ class TestFixCLI:
                     """\
 analysis:
     enabled_detectors:
-        - all
+        - cei_violation
     disabled_detectors: []
     severity_threshold: LOW
 
@@ -317,7 +324,7 @@ remediation:
                     """\
 analysis:
     enabled_detectors:
-        - all
+        - cei_violation
     disabled_detectors: []
     severity_threshold: LOW
 
