@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from guardian.analyzer.audit_labels import load_audit_labels
+from guardian.analyzer.audit_labels import AuditLabel, load_audit_labels
 from guardian.analyzer.vyper_detector import DETECTOR_MATURITY
 
 
@@ -20,6 +20,18 @@ class DetectorLabelQuality:
     reasons: tuple[str, ...]
 
 
+def _independent_units(labels: list[AuditLabel], verdicts: set[str]) -> int:
+    units: set[tuple[str, ...]] = set()
+    for label in labels:
+        if label.verdict not in verdicts:
+            continue
+        if label.finding_id:
+            units.add(("audit_finding", label.finding_id, label.evidence))
+        else:
+            units.add(("review_case", label.file, label.function or "", label.evidence))
+    return len(units)
+
+
 def evaluate_label_quality(
     labels_file: Path,
     *,
@@ -32,12 +44,8 @@ def evaluate_label_quality(
     results: list[DetectorLabelQuality] = []
     for detector in detectors:
         detector_labels = [label for label in labels if label.detector == detector]
-        positive = sum(
-            label.verdict in {"true_positive", "false_negative"} for label in detector_labels
-        )
-        negative = sum(
-            label.verdict in {"true_negative", "false_positive"} for label in detector_labels
-        )
+        positive = _independent_units(detector_labels, {"true_positive", "false_negative"})
+        negative = _independent_units(detector_labels, {"true_negative", "false_positive"})
         reviewers = len({label.reviewer for label in detector_labels})
         reasons: list[str] = []
         if positive < min_positive:

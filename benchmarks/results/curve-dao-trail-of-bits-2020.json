@@ -1,0 +1,746 @@
+{
+  "$schema": "vyper-guard-public-benchmark/v1",
+  "generated_at": "2026-07-12T05:35:36+00:00",
+  "tool": {
+    "name": "vyper-guard",
+    "version": "0.6.0"
+  },
+  "method": {
+    "semantic_mode": "source",
+    "severity_threshold": "LOW",
+    "source_integrity": "sha256_verified",
+    "candidate_review_status": "unreviewed"
+  },
+  "engagement": {
+    "id": "curve-dao-trail-of-bits-2020",
+    "protocol": "Curve DAO",
+    "repository": "curvefi/curve-dao-contracts",
+    "audited_commit": "f1c8f4351a9d6a34a7e4227712dff8eecf74ae66",
+    "verified_fix_commit": "9ba007a5013dd46e66401bc552933407f0bee044",
+    "auditor": "Trail of Bits",
+    "engagement_end": "2020-07-10",
+    "audit_report": "https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf"
+  },
+  "summary": {
+    "audit_findings_total": 21,
+    "audit_findings_supported": 1,
+    "audit_findings_unsupported": 20,
+    "audit_findings_rediscovered": 0,
+    "supported_cases_total": 13,
+    "supported_cases_rediscovered": 0,
+    "supported_cases_missed": 13,
+    "supported_case_recall": 0.0,
+    "audit_finding_coverage": 0.047619047619047616,
+    "scanner_findings_total": 41,
+    "unreviewed_candidates": 41,
+    "false_positives": null,
+    "precision": null
+  },
+  "analysis_health": {
+    "detector_failures": {},
+    "trust_levels": {
+      "low": 6
+    }
+  },
+  "coverage": [
+    {
+      "finding_id": "TOB-CURVE-DAO-001",
+      "title": "LiquidityGauge does not account for VotingEscrow balance updates",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-002",
+      "title": "LiquidityGauge does not account for VotingEscrow totalSupply updates",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-003",
+      "title": "Early users have an unfair advantage",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-004",
+      "title": "GaugeController allows a quick vote and withdraw strategy",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-005",
+      "title": "Adding the same gauge multiple times corrupts weights",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-006",
+      "title": "Spam can prevent LiquidityGauge integral updates",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-007",
+      "title": "Minter can confiscate user tokens",
+      "severity": "HIGH",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-008",
+      "title": "Mint and burn events cannot be trusted",
+      "severity": "LOW",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-009",
+      "title": "VotingEscrow admin can hold whitelisted accounts hostage",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-010",
+      "title": "Large token name and symbol are truncated",
+      "severity": "LOW",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-011",
+      "title": "Critical operations lack a two-step procedure",
+      "severity": "HIGH",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-012",
+      "title": "Token decimals return value is not bounded",
+      "severity": "LOW",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-013",
+      "title": "Critical operations lack events",
+      "severity": "INFORMATIONAL",
+      "support": "supported",
+      "detector": "missing_event_emission"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-014",
+      "title": "Whitelist removal and withdrawal race condition",
+      "severity": "INFORMATIONAL",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-015",
+      "title": "Documentation gaps are error-prone",
+      "severity": "INFORMATIONAL",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-016",
+      "title": "Historical balance functions disagree in the current block",
+      "severity": "LOW",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-017",
+      "title": "Gauge voting has no early-vote incentive",
+      "severity": "MEDIUM",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-018",
+      "title": "Several loops can become unexecutable due to gas",
+      "severity": "HIGH",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-019",
+      "title": "Brownie tests can be unreliable",
+      "severity": "UNDETERMINED",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-020",
+      "title": "Aragon voting does not follow voting best practices",
+      "severity": "HIGH",
+      "support": "unsupported"
+    },
+    {
+      "finding_id": "TOB-CURVE-DAO-021",
+      "title": "Transaction ordering can reduce earned interest",
+      "severity": "INFORMATIONAL",
+      "support": "unsupported"
+    }
+  ],
+  "cases": [
+    {
+      "id": "TOB-CURVE-DAO-013-01",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "PoolProxy.vy",
+      "function": "set_admins",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-02",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "PoolProxy.vy",
+      "function": "set_burner",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-03",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "ERC20CRV.vy",
+      "function": "update_mining_parameters",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-04",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "ERC20CRV.vy",
+      "function": "set_minter",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-05",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "ERC20CRV.vy",
+      "function": "set_admin",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-06",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "GaugeController.vy",
+      "function": "transfer_ownership",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-07",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "GaugeController.vy",
+      "function": "_change_type_weight",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-08",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "GaugeController.vy",
+      "function": "_change_gauge_weight",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-09",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "GaugeController.vy",
+      "function": "vote_for_gauge_weights",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-10",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "LiquidityGauge.vy",
+      "function": "_update_liquidity_limit",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-11",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "VotingEscrow.vy",
+      "function": "transfer_ownership",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-12",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "VotingEscrow.vy",
+      "function": "add_to_whitelist",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    },
+    {
+      "id": "TOB-CURVE-DAO-013-13",
+      "finding_id": "TOB-CURVE-DAO-013",
+      "file": "VotingEscrow.vy",
+      "function": "remove_from_whitelist",
+      "detector": "missing_event_emission",
+      "status": "missed",
+      "matches": []
+    }
+  ],
+  "candidates": [
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.balanceOf in transfer()",
+      "function": "transfer",
+      "line": 185,
+      "fingerprint": "2df818ae55cef07252c2ce43d70834af0f7e6e14dd5598d3e4f389d648b6afa5",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.balanceOf in transferFrom()",
+      "function": "transferFrom",
+      "line": 203,
+      "fingerprint": "95677368246844c47b83bd97f6f3c84eec6d2fc5d0b9b883c2d37dd1c9186ac6",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.allowances in transferFrom()",
+      "function": "transferFrom",
+      "line": 208,
+      "fingerprint": "9ff6718406718c70ff865af65249697c496e29c67353f754255e08dcf6adc783",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.balanceOf in burn()",
+      "function": "burn",
+      "line": 259,
+      "fingerprint": "823779264ebef40be0010b5986696d73da1881cca802250b6491322b6e9253fa",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.total_supply in burn()",
+      "function": "burn",
+      "line": 260,
+      "fingerprint": "ae108e8733e43b54ca9760ee91d6ed78a175fd6877533ba716689febfd6ffc9d",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.minter in set_minter()",
+      "function": "set_minter",
+      "line": 146,
+      "fingerprint": "03dee12757d2724b3bb04d877eca9a9ba7c2b2eaa8043835bc45c2acaef9c99a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.admin in set_admin()",
+      "function": "set_admin",
+      "line": 152,
+      "fingerprint": "7732a00ed29bc97150da17bc7c3b2f2b110548ae65f85d18d17e6d9900cdc7a8",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.allowances in approve()",
+      "function": "approve",
+      "line": 225,
+      "fingerprint": "071cb4b3971f43bcc0c9d6319ab789699fd07fc5b9a54ddc15fd7f37ebed9236",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.vote_slope_changes in vote_for_gauge_weights()",
+      "function": "vote_for_gauge_weights",
+      "line": 408,
+      "fingerprint": "3f417b7c420eac23d33ada07994650926ce2f18e3b35814bd0c8e4c3ab6d53ab",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in change_epoch()",
+      "function": "change_epoch",
+      "line": 101,
+      "fingerprint": "f993155cb11d50a591fe039e5984960a953bcf007efdaa892165f380589132c2",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in vote_for_gauge_weights()",
+      "function": "vote_for_gauge_weights",
+      "line": 366,
+      "fingerprint": "40b73406cf9cbcbd0e1e736f030699d7a41461e6570beff5c489c38b166ebb8b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in vote_for_gauge_weights()",
+      "function": "vote_for_gauge_weights",
+      "line": 367,
+      "fingerprint": "8497f6370c8cebdcdfe311fd43e1d9bce6a4b3f350c1f19d66f354858a6ac44c",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.admin in transfer_ownership()",
+      "function": "transfer_ownership",
+      "line": 82,
+      "fingerprint": "628f63a7f292db32c882a2b326838f80268c4122ccc06d2887386dc224750cd2",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.gauges in add_gauge()",
+      "function": "add_gauge",
+      "line": 130,
+      "fingerprint": "b78a5a89cdd9effd25616c7683c6a846f1b58f6fa353a9af3351b3f4a0a58d6f",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.gauge_types_ in add_gauge()",
+      "function": "add_gauge",
+      "line": 132,
+      "fingerprint": "3d1661cfed27285a0633ea7be6e8dc3beea125a2651e5ddec9be7ea37935de65",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.gauge_weights in add_gauge()",
+      "function": "add_gauge",
+      "line": 155,
+      "fingerprint": "c77b60e418aad54f6b15971469742ee64dde8c53d4cd80417e36b286cfd17f89",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.gauge_weights in _change_gauge_weight()",
+      "function": "_change_gauge_weight",
+      "line": 310,
+      "fingerprint": "6e2045ff0c9f45d31c9a9590cb66d5af730ac426b6dfb4ace80773d2abac6ca6",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "send_in_loop",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "External call inside loop in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 116,
+      "fingerprint": "d68bcf16f52fc3b75e7bbb584a046d089a4e26ba11e08d4c87b8e324e3e1c31b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "send_in_loop",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "External call inside loop in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 118,
+      "fingerprint": "d68bcf16f52fc3b75e7bbb584a046d089a4e26ba11e08d4c87b8e324e3e1c31b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "send_in_loop",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "External call inside loop in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 130,
+      "fingerprint": "d68bcf16f52fc3b75e7bbb584a046d089a4e26ba11e08d4c87b8e324e3e1c31b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 98,
+      "fingerprint": "8c01bdf00691372fe5e322617b477ff58469c793fba74a0670c3108915938166",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 99,
+      "fingerprint": "60793ad6ace6b41c46c7deea357ec7fff5c7ca3c990a3f3afc0d1c491480b57a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 100,
+      "fingerprint": "672a1121207da7b6b137160f9d6c391da763036ea2c745b616a71348f8f18df3",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 101,
+      "fingerprint": "9e33cf8915b74475c8085c4d080affd1ba8c0b94aef90baeeff24dca966b5357",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 116,
+      "fingerprint": "c407bbe48117250eef60dd0da271d9cf7b319f6dd2f9e7eb693299b8d8a3df1b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 118,
+      "fingerprint": "9238832046212067f42dd521c45b152316e2befdf3239931de0b64f1dad40749",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "cei_violation",
+      "severity": "HIGH",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in _checkpoint()",
+      "function": "_checkpoint",
+      "line": 130,
+      "fingerprint": "390c44a1465b321726f1ddfccff6366176bb91126fda6e3cd52f926f026c8349",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "Minter.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in mint()",
+      "function": "mint",
+      "line": 31,
+      "fingerprint": "1f1e8cb8b51f5cf9c3059a55ccfa968269a802db84ba71d74affd2c4b62caa7b",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "Minter.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "CEI violation in mint()",
+      "function": "mint",
+      "line": 34,
+      "fingerprint": "80c224fcf3ab5a7751c753b18f2a0ddd290feb6a25144593ffa7e4c81103c8a4",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "Minter.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "CEI violation in mint()",
+      "function": "mint",
+      "line": 35,
+      "fingerprint": "73696ce20307b2b35031787d3962fbfd15afe159fa2a6b77f21b9f19dea596a7",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "Minter.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "MEDIUM",
+      "title": "CEI violation in mint()",
+      "function": "mint",
+      "line": 39,
+      "fingerprint": "7780fc0f485f82f4a596637c476f9ba7e4e78a2b24ae8ed5bae545174e9051a2",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "CEI violation in set_burner()",
+      "function": "set_burner",
+      "line": 57,
+      "fingerprint": "3d77045ce982ed8c52a503f5c6aee922c2688ff1fb94cc25dd8975ce5e219d7a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "cei_violation",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "CEI violation in set_burner()",
+      "function": "set_burner",
+      "line": 59,
+      "fingerprint": "3d77045ce982ed8c52a503f5c6aee922c2688ff1fb94cc25dd8975ce5e219d7a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.ownership_admin in set_admins()",
+      "function": "set_admins",
+      "line": 43,
+      "fingerprint": "42e5c3428bfd813e9a26468e36f7b2ddb0e09820015de8529ba3be44aa718d4f",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.parameter_admin in set_admins()",
+      "function": "set_admins",
+      "line": 44,
+      "fingerprint": "1aece5598af562b2efa2626016074accfceb30d918d0b2c81469525d0afe66f5",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.emergency_admin in set_admins()",
+      "function": "set_admins",
+      "line": 45,
+      "fingerprint": "a5e98bcd702c79a747180c043c1f15251e7ce28ce16bcaf5f7d8183c6bfc9f97",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.burners in set_burner()",
+      "function": "set_burner",
+      "line": 61,
+      "fingerprint": "de69f9818bf84ac94da6957933c27adb260422a9df1d15da98167eb0c319404d",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "unchecked_subtraction",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unchecked subtraction of self.supply in withdraw()",
+      "function": "withdraw",
+      "line": 306,
+      "fingerprint": "d333f107f24df1e211383707907e87e945a3e27d002e61e35068384b49799119",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "tx_origin_auth",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "tx.origin restricts contract callers in assert_not_contract()",
+      "function": "assert_not_contract",
+      "line": 104,
+      "fingerprint": "ff6c246e3d95831664886897376d59b0696a90ffe748aef620d616734b24a32e",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.admin in transfer_ownership()",
+      "function": "transfer_ownership",
+      "line": 87,
+      "fingerprint": "628f63a7f292db32c882a2b326838f80268c4122ccc06d2887386dc224750cd2",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_zero_address_check",
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "title": "Missing zero-address check for self.controller in changeController()",
+      "function": "changeController",
+      "line": 453,
+      "fingerprint": "908c01178afc4025b9dbbb95166d601bc14c31c579dc53824962cce410872c26",
+      "review_status": "unreviewed"
+    }
+  ]
+}

@@ -1,16 +1,19 @@
 {
   "$schema": "vyper-guard-labels/v2",
-  "description": "Published Curve DAO audit labels used only for rediscovery attribution.",
+  "description": "Trail of Bits Curve DAO finding 13 locations at audited revision f1c8f4351a9d6a34a7e4227712dff8eecf74ae66. These 13 locations count as one independent audit finding for promotion gates.",
   "labels": [
-    {
-      "file": "VotingEscrow.vy",
-      "detector": "missing_zero_address_check",
-      "verdict": "true_positive",
-      "reviewer": "Trail of Bits",
-      "reviewed_at": "2020-06-01T00:00:00Z",
-      "evidence": "https://docs.curve.finance/assets/pdf/audits/curve-dao-ToB-final.pdf",
-      "finding_id": "TOB-CURVE-DAO-011",
-      "function": "commit_transfer_ownership"
-    }
+    {"file":"PoolProxy.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"set_admins"},
+    {"file":"PoolProxy.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"set_burner"},
+    {"file":"ERC20CRV.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"update_mining_parameters"},
+    {"file":"ERC20CRV.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"set_minter"},
+    {"file":"ERC20CRV.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"set_admin"},
+    {"file":"GaugeController.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"transfer_ownership"},
+    {"file":"GaugeController.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"_change_type_weight"},
+    {"file":"GaugeController.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"_change_gauge_weight"},
+    {"file":"GaugeController.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"vote_for_gauge_weights"},
+    {"file":"LiquidityGauge.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"_update_liquidity_limit"},
+    {"file":"VotingEscrow.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"transfer_ownership"},
+    {"file":"VotingEscrow.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"add_to_whitelist"},
+    {"file":"VotingEscrow.vy","detector":"missing_event_emission","verdict":"true_positive","reviewer":"Trail of Bits","reviewed_at":"2020-07-10T00:00:00Z","evidence":"https://docs.curve.fi/assets/pdf/curve-dao-ToB-final.pdf#page=35","finding_id":"TOB-CURVE-DAO-013","function":"remove_from_whitelist"}
   ]
 }
