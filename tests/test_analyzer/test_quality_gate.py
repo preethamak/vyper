@@ -34,6 +34,7 @@ def test_label_quality_requires_positive_negative_and_reviewers(tmp_path) -> Non
     payload = evaluate_label_quality(labels, min_positive=1, min_negative=1, min_reviewers=2)
     result = next(item for item in payload["detectors"] if item["detector"] == "unsafe_raw_call")
     assert result["eligible"] is True
+    assert result["maturity"] == "experimental"
 
 
 def test_label_quality_deduplicates_locations_from_one_audit_finding(tmp_path) -> None:

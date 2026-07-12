@@ -10,29 +10,43 @@
 - Published audit findings: 21
 - Findings supported by current detectors: 1
 - Supported benchmark locations: 13
-- Locations rediscovered: 0
-- Supported-case recall: 0.0%
-- Scanner candidates: 41
-- Unreviewed candidates: 41
+- Locations rediscovered: 9
+- Supported-case recall: 69.2%
+- Scanner candidates: 72
+- Unreviewed candidates: 63
 - Precision: not measured; candidates have not been independently reviewed
 
 ## Supported cases
 
 | Case | File | Function | Detector | Result |
 | --- | --- | --- | --- | --- |
-| TOB-CURVE-DAO-013-01 | `PoolProxy.vy` | `set_admins` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-02 | `PoolProxy.vy` | `set_burner` | `missing_event_emission` | **missed** |
+| TOB-CURVE-DAO-013-01 | `PoolProxy.vy` | `set_admins` | `missing_event_emission` | **rediscovered** |
+| TOB-CURVE-DAO-013-02 | `PoolProxy.vy` | `set_burner` | `missing_event_emission` | **rediscovered** |
 | TOB-CURVE-DAO-013-03 | `ERC20CRV.vy` | `update_mining_parameters` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-04 | `ERC20CRV.vy` | `set_minter` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-05 | `ERC20CRV.vy` | `set_admin` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-06 | `GaugeController.vy` | `transfer_ownership` | `missing_event_emission` | **missed** |
+| TOB-CURVE-DAO-013-04 | `ERC20CRV.vy` | `set_minter` | `missing_event_emission` | **rediscovered** |
+| TOB-CURVE-DAO-013-05 | `ERC20CRV.vy` | `set_admin` | `missing_event_emission` | **rediscovered** |
+| TOB-CURVE-DAO-013-06 | `GaugeController.vy` | `transfer_ownership` | `missing_event_emission` | **rediscovered** |
 | TOB-CURVE-DAO-013-07 | `GaugeController.vy` | `_change_type_weight` | `missing_event_emission` | **missed** |
 | TOB-CURVE-DAO-013-08 | `GaugeController.vy` | `_change_gauge_weight` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-09 | `GaugeController.vy` | `vote_for_gauge_weights` | `missing_event_emission` | **missed** |
+| TOB-CURVE-DAO-013-09 | `GaugeController.vy` | `vote_for_gauge_weights` | `missing_event_emission` | **rediscovered** |
 | TOB-CURVE-DAO-013-10 | `LiquidityGauge.vy` | `_update_liquidity_limit` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-11 | `VotingEscrow.vy` | `transfer_ownership` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-12 | `VotingEscrow.vy` | `add_to_whitelist` | `missing_event_emission` | **missed** |
-| TOB-CURVE-DAO-013-13 | `VotingEscrow.vy` | `remove_from_whitelist` | `missing_event_emission` | **missed** |
+| TOB-CURVE-DAO-013-11 | `VotingEscrow.vy` | `transfer_ownership` | `missing_event_emission` | **rediscovered** |
+| TOB-CURVE-DAO-013-12 | `VotingEscrow.vy` | `add_to_whitelist` | `missing_event_emission` | **rediscovered** |
+| TOB-CURVE-DAO-013-13 | `VotingEscrow.vy` | `remove_from_whitelist` | `missing_event_emission` | **rediscovered** |
+
+## Detector evidence
+
+| Detector | Maturity | Cases | Rediscovered | Recall | Candidates | Precision |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `cei_violation` | experimental | 0 | 0 | n/a | 16 | not measured |
+| `missing_event_emission` | experimental | 13 | 9 | 69.2% | 24 | not measured |
+| `missing_input_validation` | experimental | 0 | 0 | n/a | 3 | not measured |
+| `missing_nonreentrant` | experimental | 0 | 0 | n/a | 3 | not measured |
+| `missing_zero_address_check` | experimental | 0 | 0 | n/a | 14 | not measured |
+| `send_in_loop` | experimental | 0 | 0 | n/a | 3 | not measured |
+| `tx_origin_auth` | supported | 0 | 0 | n/a | 1 | not measured |
+| `unchecked_subtraction` | experimental | 0 | 0 | n/a | 7 | not measured |
+| `unprotected_state_change` | experimental | 0 | 0 | n/a | 1 | not measured |
 
 ## Interpretation
 

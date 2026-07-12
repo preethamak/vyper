@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from guardian.analyzer.audit_labels import AuditLabel, load_audit_labels
-from guardian.analyzer.vyper_detector import DETECTOR_MATURITY
+from guardian.analyzer.vyper_detector import DETECTOR_MAP, DETECTOR_MATURITY
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,11 @@ def evaluate_label_quality(
         results.append(
             DetectorLabelQuality(
                 detector=detector,
-                maturity=DETECTOR_MATURITY.get(detector, "unregistered"),
+                maturity=(
+                    DETECTOR_MATURITY.get(detector, "experimental")
+                    if detector in DETECTOR_MAP
+                    else "unregistered"
+                ),
                 positive=positive,
                 negative=negative,
                 reviewers=reviewers,

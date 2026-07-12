@@ -78,6 +78,12 @@ def test_audited_benchmark_reports_coverage_and_case_recall(tmp_path: Path) -> N
     assert result["summary"]["supported_case_recall"] == 1.0
     assert result["summary"]["precision"] is None
     assert result["cases"][0]["status"] == "rediscovered"
+    detector = next(
+        item for item in result["detectors"] if item["detector"] == "missing_event_emission"
+    )
+    assert detector["recall"] == 1.0
+    assert detector["precision"] is None
+    assert detector["promotion_status"] == "insufficient_reviewed_evidence"
     assert "Precision: not measured" in render_markdown(result)
 
 

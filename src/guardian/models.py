@@ -114,11 +114,12 @@ class FunctionInfo(BaseModel):
 
     @property
     def is_external(self) -> bool:
-        return "external" in self.decorators
+        # Vyper used @public before the @external naming introduced in v0.2.
+        return "external" in self.decorators or "public" in self.decorators
 
     @property
     def is_internal(self) -> bool:
-        return "internal" in self.decorators
+        return "internal" in self.decorators or "private" in self.decorators
 
     @property
     def is_view(self) -> bool:

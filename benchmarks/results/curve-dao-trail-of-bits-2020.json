@@ -1,6 +1,6 @@
 {
   "$schema": "vyper-guard-public-benchmark/v1",
-  "generated_at": "2026-07-12T05:35:36+00:00",
+  "generated_at": "2026-07-12T10:18:12+00:00",
   "tool": {
     "name": "vyper-guard",
     "version": "0.6.0"
@@ -25,14 +25,14 @@
     "audit_findings_total": 21,
     "audit_findings_supported": 1,
     "audit_findings_unsupported": 20,
-    "audit_findings_rediscovered": 0,
+    "audit_findings_rediscovered": 1,
     "supported_cases_total": 13,
-    "supported_cases_rediscovered": 0,
-    "supported_cases_missed": 13,
-    "supported_case_recall": 0.0,
+    "supported_cases_rediscovered": 9,
+    "supported_cases_missed": 4,
+    "supported_case_recall": 0.6923076923076923,
     "audit_finding_coverage": 0.047619047619047616,
-    "scanner_findings_total": 41,
-    "unreviewed_candidates": 41,
+    "scanner_findings_total": 72,
+    "unreviewed_candidates": 63,
     "false_positives": null,
     "precision": null
   },
@@ -171,6 +171,116 @@
       "support": "unsupported"
     }
   ],
+  "detectors": [
+    {
+      "detector": "cei_violation",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 16,
+      "unreviewed_candidates": 16,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "missing_event_emission",
+      "maturity": "experimental",
+      "supported_cases": 13,
+      "rediscovered_cases": 9,
+      "missed_cases": 4,
+      "recall": 0.6923076923076923,
+      "scanner_findings": 24,
+      "unreviewed_candidates": 15,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "missing_input_validation",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 3,
+      "unreviewed_candidates": 3,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "missing_nonreentrant",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 3,
+      "unreviewed_candidates": 3,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "missing_zero_address_check",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 14,
+      "unreviewed_candidates": 14,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "send_in_loop",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 3,
+      "unreviewed_candidates": 3,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "tx_origin_auth",
+      "maturity": "supported",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 1,
+      "unreviewed_candidates": 1,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "unchecked_subtraction",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 7,
+      "unreviewed_candidates": 7,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    },
+    {
+      "detector": "unprotected_state_change",
+      "maturity": "experimental",
+      "supported_cases": 0,
+      "rediscovered_cases": 0,
+      "missed_cases": 0,
+      "recall": null,
+      "scanner_findings": 1,
+      "unreviewed_candidates": 1,
+      "precision": null,
+      "promotion_status": "insufficient_reviewed_evidence"
+    }
+  ],
   "cases": [
     {
       "id": "TOB-CURVE-DAO-013-01",
@@ -178,8 +288,10 @@
       "file": "PoolProxy.vy",
       "function": "set_admins",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "3d49a255fcd5eb579cfabe3a117992fd45dbed296eeda02fac22c262c6447256"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-02",
@@ -187,8 +299,10 @@
       "file": "PoolProxy.vy",
       "function": "set_burner",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "ff0bf9d1a5a0a63c68a23e580ef3e638b376155f1b9f4b27fe965195f8b9e57b"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-03",
@@ -205,8 +319,10 @@
       "file": "ERC20CRV.vy",
       "function": "set_minter",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "823483358c515aded5ae433fdbfe924ec1c91f3ba74bfd1eacd09e0dc92ef426"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-05",
@@ -214,8 +330,10 @@
       "file": "ERC20CRV.vy",
       "function": "set_admin",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "6ed7fa96bd7b5c3668134819e2e0f166ded0fd493f2242e963170c2861939dae"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-06",
@@ -223,8 +341,10 @@
       "file": "GaugeController.vy",
       "function": "transfer_ownership",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "bda4bbb098993f1716f0ef1ef0f506704d65546ee728ff198c71f34e07f60553"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-07",
@@ -250,8 +370,10 @@
       "file": "GaugeController.vy",
       "function": "vote_for_gauge_weights",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "a8867f8cfa732e9b716c9711539684f64e0d0328d0410e5ed8ccdc0d1c4263fe"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-10",
@@ -268,8 +390,10 @@
       "file": "VotingEscrow.vy",
       "function": "transfer_ownership",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "bda4bbb098993f1716f0ef1ef0f506704d65546ee728ff198c71f34e07f60553"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-12",
@@ -277,8 +401,10 @@
       "file": "VotingEscrow.vy",
       "function": "add_to_whitelist",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "57eb7b70ad2098d54a4d74f5fff748abac1e405a403a0e0aae798bfd0e4f6fcd"
+      ]
     },
     {
       "id": "TOB-CURVE-DAO-013-13",
@@ -286,11 +412,112 @@
       "file": "VotingEscrow.vy",
       "function": "remove_from_whitelist",
       "detector": "missing_event_emission",
-      "status": "missed",
-      "matches": []
+      "status": "rediscovered",
+      "matches": [
+        "47658667b12a3a55f8975af29227416794b9c35dfaf1e3b80f60af932ec10c6e"
+      ]
     }
   ],
   "candidates": [
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in set_minter()",
+      "function": "set_minter",
+      "line": 143,
+      "fingerprint": "823483358c515aded5ae433fdbfe924ec1c91f3ba74bfd1eacd09e0dc92ef426",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in set_admin()",
+      "function": "set_admin",
+      "line": 149,
+      "fingerprint": "6ed7fa96bd7b5c3668134819e2e0f166ded0fd493f2242e963170c2861939dae",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in transfer()",
+      "function": "transfer",
+      "line": 176,
+      "fingerprint": "71e8ba21f232cfd33ac28f13ef03f060c9fd6a93e781689440d57014988cb1be",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in transferFrom()",
+      "function": "transferFrom",
+      "line": 191,
+      "fingerprint": "61e49371f414ff06141ef69953f71c66576c758aa2c69c2fe5b83e92a3e49e4c",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in approve()",
+      "function": "approve",
+      "line": 213,
+      "fingerprint": "6cacc9cdc505913c473f9abb51c356fd272712f01b68396a6ebaa7f491f61ee1",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in mint()",
+      "function": "mint",
+      "line": 230,
+      "fingerprint": "e63314d319b590114e070d73383e9ab613f4138c6cf33fcf51f003aca050940c",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in burn()",
+      "function": "burn",
+      "line": 253,
+      "fingerprint": "57fa67c6c20cf1f4df6fca7d5219212012f14cc79a51194ca335cbd7124cc588",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in set_name()",
+      "function": "set_name",
+      "line": 266,
+      "fingerprint": "9d5ade9076b005805c7afc0af2299b321a3e26ceb21f3893d572c7059942c617",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "ERC20CRV.vy",
+      "detector": "unprotected_state_change",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Unprotected write to self.total_supply in burn()",
+      "function": "burn",
+      "line": 253,
+      "fingerprint": "a904c68c1f80f0535c9df3b0ed622fc2766613ca7b810e5b2e84e8663ae38eab",
+      "review_status": "unreviewed"
+    },
     {
       "file": "ERC20CRV.vy",
       "detector": "unchecked_subtraction",
@@ -378,6 +605,105 @@
       "line": 225,
       "fingerprint": "071cb4b3971f43bcc0c9d6319ab789699fd07fc5b9a54ddc15fd7f37ebed9236",
       "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_nonreentrant",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Missing @nonreentrant on period_write()",
+      "function": "period_write",
+      "line": 109,
+      "fingerprint": "b553a3d38a3c6316986c57664812e6153169aeb13edb2a078cc344cc38374173",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_nonreentrant",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "title": "Missing @nonreentrant on gauge_relative_weight_write()",
+      "function": "gauge_relative_weight_write",
+      "line": 179,
+      "fingerprint": "811a51cc966590934a22fde50f25294f51558cf96a5c8f98d5f8ea8b96771f7a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_nonreentrant",
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "title": "Missing @nonreentrant on vote_for_gauge_weights()",
+      "function": "vote_for_gauge_weights",
+      "line": 358,
+      "fingerprint": "83e18cb05365489133bc1d8495867923dd96ee4f9b3878d75c781bff53fda2fb",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in transfer_ownership()",
+      "function": "transfer_ownership",
+      "line": 79,
+      "fingerprint": "bda4bbb098993f1716f0ef1ef0f506704d65546ee728ff198c71f34e07f60553",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in period_write()",
+      "function": "period_write",
+      "line": 109,
+      "fingerprint": "8740e6d2cec2c36c4f25e6035df5d4cee3efdc4297728fb9df702df26f7fd462",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in add_gauge()",
+      "function": "add_gauge",
+      "line": 120,
+      "fingerprint": "e6d872648ca7bf1b7f7184127d8204a9617722c6991f58d80e6aa92004f66b87",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in gauge_relative_weight_write()",
+      "function": "gauge_relative_weight_write",
+      "line": 179,
+      "fingerprint": "b3dbd51d9d9cde63f6c5a5347daf250a2af232c6078e9970e0747bc23e8a64fc",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in add_type()",
+      "function": "add_type",
+      "line": 255,
+      "fingerprint": "ded7e70b5cc1316ccc99aeedbdb92459df00e9bc38cd039621cf34caba938fcf",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "GaugeController.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in vote_for_gauge_weights()",
+      "function": "vote_for_gauge_weights",
+      "line": 358,
+      "fingerprint": "a8867f8cfa732e9b716c9711539684f64e0d0328d0410e5ed8ccdc0d1c4263fe",
+      "review_status": "known_issue_rediscovered"
     },
     {
       "file": "GaugeController.vy",
@@ -476,6 +802,28 @@
       "function": "_change_gauge_weight",
       "line": 310,
       "fingerprint": "6e2045ff0c9f45d31c9a9590cb66d5af730ac426b6dfb4ace80773d2abac6ca6",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in deposit()",
+      "function": "deposit",
+      "line": 188,
+      "fingerprint": "c0f5d3a138e8ca558c1d23cc25283164f1ec838aa88f569904301ab125629fb7",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in withdraw()",
+      "function": "withdraw",
+      "line": 205,
+      "fingerprint": "ce77c0fb9df69d40d48a74d381ef944d0b63fa4eb2208a61c77fc4b557c8097d",
       "review_status": "unreviewed"
     },
     {
@@ -589,6 +937,39 @@
       "review_status": "unreviewed"
     },
     {
+      "file": "LiquidityGauge.vy",
+      "detector": "missing_input_validation",
+      "severity": "MEDIUM",
+      "confidence": "MEDIUM",
+      "title": "No input validation in deposit()",
+      "function": "deposit",
+      "line": 188,
+      "fingerprint": "22692df1d921513ca03512bf0a8638defd06e9d0d0d89fc121e953265e2e6c8a",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "LiquidityGauge.vy",
+      "detector": "missing_input_validation",
+      "severity": "MEDIUM",
+      "confidence": "MEDIUM",
+      "title": "No input validation in withdraw()",
+      "function": "withdraw",
+      "line": 205,
+      "fingerprint": "148fcb9775b069761df6cbd9ea289b64118c51fcce9a5882270eeaba8aed3e72",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "Minter.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in mint()",
+      "function": "mint",
+      "line": 25,
+      "fingerprint": "e63314d319b590114e070d73383e9ab613f4138c6cf33fcf51f003aca050940c",
+      "review_status": "unreviewed"
+    },
+    {
       "file": "Minter.vy",
       "detector": "cei_violation",
       "severity": "LOW",
@@ -631,6 +1012,28 @@
       "line": 39,
       "fingerprint": "7780fc0f485f82f4a596637c476f9ba7e4e78a2b24ae8ed5bae545174e9051a2",
       "review_status": "unreviewed"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in set_admins()",
+      "function": "set_admins",
+      "line": 39,
+      "fingerprint": "3d49a255fcd5eb579cfabe3a117992fd45dbed296eeda02fac22c262c6447256",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "PoolProxy.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in set_burner()",
+      "function": "set_burner",
+      "line": 48,
+      "fingerprint": "ff0bf9d1a5a0a63c68a23e580ef3e638b376155f1b9f4b27fe965195f8b9e57b",
+      "review_status": "known_issue_rediscovered"
     },
     {
       "file": "PoolProxy.vy",
@@ -700,6 +1103,61 @@
     },
     {
       "file": "VotingEscrow.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in transfer_ownership()",
+      "function": "transfer_ownership",
+      "line": 84,
+      "fingerprint": "bda4bbb098993f1716f0ef1ef0f506704d65546ee728ff198c71f34e07f60553",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in add_to_whitelist()",
+      "function": "add_to_whitelist",
+      "line": 90,
+      "fingerprint": "57eb7b70ad2098d54a4d74f5fff748abac1e405a403a0e0aae798bfd0e4f6fcd",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in remove_from_whitelist()",
+      "function": "remove_from_whitelist",
+      "line": 96,
+      "fingerprint": "47658667b12a3a55f8975af29227416794b9c35dfaf1e3b80f60af932ec10c6e",
+      "review_status": "known_issue_rediscovered"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in withdraw()",
+      "function": "withdraw",
+      "line": 288,
+      "fingerprint": "ce77c0fb9df69d40d48a74d381ef944d0b63fa4eb2208a61c77fc4b557c8097d",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_event_emission",
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "title": "No event emitted in changeController()",
+      "function": "changeController",
+      "line": 450,
+      "fingerprint": "cd03c1c08e8c586150021eceabaca24cab771fa3821bc54310bc7fc78813091d",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
       "detector": "unchecked_subtraction",
       "severity": "HIGH",
       "confidence": "HIGH",
@@ -740,6 +1198,17 @@
       "function": "changeController",
       "line": 453,
       "fingerprint": "908c01178afc4025b9dbbb95166d601bc14c31c579dc53824962cce410872c26",
+      "review_status": "unreviewed"
+    },
+    {
+      "file": "VotingEscrow.vy",
+      "detector": "missing_input_validation",
+      "severity": "MEDIUM",
+      "confidence": "MEDIUM",
+      "title": "No input validation in deposit()",
+      "function": "deposit",
+      "line": 277,
+      "fingerprint": "22692df1d921513ca03512bf0a8638defd06e9d0d0d89fc121e953265e2e6c8a",
       "review_status": "unreviewed"
     }
   ]

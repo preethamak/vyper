@@ -628,6 +628,20 @@ def __init__():
         results = _run_detector(MissingEventEmissionDetector, source)
         assert len(results) == 0
 
+    def test_legacy_public_state_change_is_checked_for_missing_event(self) -> None:
+        source = """\
+# @version ^0.1.0-beta.17
+
+owner: address
+
+@public
+def set_owner(new_owner: address):
+    self.owner = new_owner
+"""
+        results = _run_detector(MissingEventEmissionDetector, source)
+        assert len(results) == 1
+        assert "set_owner" in results[0].title
+
     def test_deploy_init_not_flagged_for_missing_event(self) -> None:
         source = """\
 # pragma version ^0.4.0

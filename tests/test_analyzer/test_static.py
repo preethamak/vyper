@@ -36,6 +36,24 @@ class TestParseVyperSource:
         assert get_bal.is_external
         assert get_bal.is_view
 
+    def test_legacy_visibility_decorators_are_normalized(self) -> None:
+        contract = parse_vyper_source(
+            """\
+@public
+def exposed():
+    pass
+
+@private
+def helper():
+    pass
+"""
+        )
+
+        exposed = next(f for f in contract.functions if f.name == "exposed")
+        helper = next(f for f in contract.functions if f.name == "helper")
+        assert exposed.is_external
+        assert helper.is_internal
+
     def test_extracts_events(self, vulnerable_vault_source: str) -> None:
         contract = parse_vyper_source(vulnerable_vault_source)
         event_names = [e.name for e in contract.events]

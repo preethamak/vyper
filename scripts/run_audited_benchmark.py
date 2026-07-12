@@ -13,6 +13,7 @@ from typing import Any
 
 from guardian import __version__
 from guardian.analyzer.static import StaticAnalyzer
+from guardian.analyzer.vyper_detector import DETECTOR_MAP, DETECTOR_MATURITY
 from guardian.models import Severity
 from guardian.reporting.json_exporter import report_to_dict
 
@@ -137,6 +138,38 @@ def run(engagement_path: Path, source_dir: Path) -> dict[str, Any]:
     ]
     case_recall = rediscovered_cases / len(cases) if cases else None
     audit_coverage = len(supported_findings) / len(coverage)
+    detector_names = sorted(
+        {str(case["detector"]) for case in cases}
+        | {str(finding["detector"]) for finding in findings}
+    )
+    detector_metrics = []
+    for detector in detector_names:
+        detector_cases = [case for case in cases if case["detector"] == detector]
+        detector_hits = sum(case["status"] == "rediscovered" for case in detector_cases)
+        detector_candidates = [
+            finding for finding in findings if finding["detector"] == detector
+        ]
+        detector_metrics.append(
+            {
+                "detector": detector,
+                "maturity": (
+                    DETECTOR_MATURITY.get(detector, "experimental")
+                    if detector in DETECTOR_MAP
+                    else "unregistered"
+                ),
+                "supported_cases": len(detector_cases),
+                "rediscovered_cases": detector_hits,
+                "missed_cases": len(detector_cases) - detector_hits,
+                "recall": detector_hits / len(detector_cases) if detector_cases else None,
+                "scanner_findings": len(detector_candidates),
+                "unreviewed_candidates": sum(
+                    finding["review_status"] == "unreviewed"
+                    for finding in detector_candidates
+                ),
+                "precision": None,
+                "promotion_status": "insufficient_reviewed_evidence",
+            }
+        )
 
     return {
         "$schema": "vyper-guard-public-benchmark/v1",
@@ -181,6 +214,7 @@ def run(engagement_path: Path, source_dir: Path) -> dict[str, Any]:
             "trust_levels": dict(sorted(trust_levels.items())),
         },
         "coverage": coverage,
+        "detectors": detector_metrics,
         "cases": cases,
         "candidates": findings,
     }
@@ -219,6 +253,23 @@ def render_markdown(result: dict[str, Any]) -> str:
         lines.append(
             f"| {case['id']} | `{case['file']}` | `{case['function']}` | "
             f"`{case['detector']}` | **{case['status']}** |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Detector evidence",
+            "",
+            "| Detector | Maturity | Cases | Rediscovered | Recall | Candidates | Precision |",
+            "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for detector in result["detectors"]:
+        detector_recall = detector["recall"]
+        detector_recall_text = "n/a" if detector_recall is None else f"{detector_recall:.1%}"
+        lines.append(
+            f"| `{detector['detector']}` | {detector['maturity']} | "
+            f"{detector['supported_cases']} | {detector['rediscovered_cases']} | "
+            f"{detector_recall_text} | {detector['scanner_findings']} | not measured |"
         )
     lines.extend(
         [
