@@ -1,13 +1,34 @@
 # Vyper Guard
 
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/vyper-guard?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=ORANGE&left_text=downloads)](https://pepy.tech/projects/vyper-guard)
-[![Socket Badge](https://badge.socket.dev/pypi/package/vyper-guard/0.5.1?artifact_id=tar-gz)](https://badge.socket.dev/pypi/package/vyper-guard/0.5.1?artifact_id=tar-gz)
+[![Socket Badge](https://badge.socket.dev/pypi/package/vyper-guard/0.6.0?artifact_id=tar-gz)](https://badge.socket.dev/pypi/package/vyper-guard/0.6.0?artifact_id=tar-gz)
 
 **Static security analyzer for Vyper smart contracts.**
 
 Vyper Guard scans .vy sources, runs a focused detector suite, and emits structured security reports for auditors, developers, and security teams. It is designed for fast local analysis with optional compiler-backed semantics and verification workflows.
 
 Website: https://vyper-web.vercel.app
+
+## What's new in 0.6.0
+
+Vyper Guard 0.6.0 is a precision and trust release for professional security workflows:
+
+- **Lower-noise analysis:** improved call-target, mutability, timestamp, arithmetic, access-control,
+  and legacy Vyper reasoning reduces avoidable findings on production contracts.
+- **Clearer trust signals:** reports now identify semantic-engine provenance, detector maturity,
+  degraded analysis, protocol assumptions, and reviewed audit attribution.
+- **Safer remediation:** compiler-backed validation blocks writes when a generated patch does not
+  validate, while governed baseline acceptances require ownership and rationale.
+- **Audit-focused output:** concise terminal triage highlights actionable candidates while JSON,
+  Markdown, SARIF, and HTML retain the full evidence set.
+- **Reproducible quality evidence:** pinned production-contract corpora, detector quality gates,
+  and an [evidence-backed Curve DAO benchmark](https://github.com/preethamak/vyper/blob/main/benchmarks/results/curve-dao-trail-of-bits-2020.md)
+  make current coverage and limitations explicit.
+- **CI-ready distribution:** a reusable GitHub Action generates SARIF for code-scanning and
+  regression workflows.
+
+See the [changelog](https://github.com/preethamak/vyper/blob/main/docs/CHANGELOG.md) for the
+complete release notes.
 
 ## Who it is for
 

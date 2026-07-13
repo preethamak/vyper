@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased - Auditor precision
+All notable changes to Vyper Guard are documented in this file.
+
+## 2026-07-13 — v0.6.0
+
+### Added
+
+- Added detector maturity metadata and the `recommended` supported+beta detector profile.
+- Added governed v2 baseline acceptances with required owner, reason, and optional expiry.
+- Added compiler-backed remediation validation evidence and write blocking on validation failure.
+- Added a pinned, SHA-256 verified production-contract calibration corpus and fetch script.
+- Added a reusable composite GitHub Action for SARIF generation.
+- Added a subprocess-backed Vyper JSON AST semantic engine with bounded caching and explicit
+  compiler engine, version, and fallback provenance.
+- Added reviewed-audit attribution (`known_issue_rediscovered`, `known_false_positive`,
+  `new_candidate`) and grouped deterministic triage summaries.
+
+### Improved
 
 - Collapse applicable compiler advisories into one exposure summary per contract.
 - Replace invalid/misattributed advisory identifiers with reviewed Vyper advisories and
@@ -11,30 +27,13 @@
 - Classify timestamp usage as accounting, protocol scheduling, authorization windows,
   state transitions, or randomness.
 - Record Curve-style scheduled-slope invariants as explicit protocol assumptions.
-- Add reviewed-audit attribution (`known_issue_rediscovered`, `known_false_positive`,
-  `new_candidate`) and grouped deterministic triage summaries.
 - Limit terminal detail to a concise grouped candidate set while retaining all raw findings
   in structured reports.
 
-All notable changes to Vyper Guard are documented in this file.
-
-## Unreleased
-
-### Added
-
-- Added first-pass CEI/reentrancy exploit verification metadata. CEI findings now include a
-  structured proof path, attacker-control hints, patch strategy, and regression-test skeleton in
-  JSON output and terminal details.
-- Added detector maturity metadata and the `recommended` supported+beta detector profile.
-- Added governed v2 baseline acceptances with required owner, reason, and optional expiry.
-- Added compiler-backed remediation validation evidence and write blocking on validation failure.
-- Added a pinned, SHA-256 verified production-contract calibration corpus and fetch script.
-- Added a reusable composite GitHub Action for SARIF generation.
-- Added a subprocess-backed Vyper JSON AST semantic engine with bounded caching and explicit
-  compiler engine, version, and fallback provenance.
-
 ### Fixed
 
+- Kept analysis warnings on stderr so compiler fallbacks cannot corrupt JSON or other
+  machine-readable output.
 - Redacted API keys from LLM transport exception URLs.
 - Fixed cumulative remediation patch composition and invalid decorator placement.
 - Fixed generated `.guardianrc` indentation and monitor-extra rendering.
@@ -43,6 +42,18 @@ All notable changes to Vyper Guard are documented in this file.
 - Reduced reentrancy false positives for stateless external calls and role-enforced setters, and
   suppressed directly guarded `unsafe_sub` operations.
 - Report the actual source semantic mode when compiler mode is unavailable.
+
+## 2026-07-07 — v0.5.1
+
+### Added
+
+- Added first-pass CEI/reentrancy exploit verification metadata. CEI findings now include a
+  structured proof path, attacker-control hints, patch strategy, and regression-test skeleton in
+  JSON output and terminal details.
+
+### Release
+
+- Version bump to `0.5.1`.
 
 ## 2026-06-28 — v0.5.0
 

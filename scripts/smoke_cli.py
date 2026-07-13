@@ -132,7 +132,9 @@ def main() -> int:
         _run(["ai", "config", "show"], cwd=tmp)
         _run(["explorer", "config", "show"], cwd=tmp)
 
-    print(f"Validated {len(TOP_LEVEL_COMMANDS)} top-level command interfaces and offline workflows.")
+    print(
+        f"Validated {len(TOP_LEVEL_COMMANDS)} top-level command interfaces and offline workflows."
+    )
     return 0
 
 

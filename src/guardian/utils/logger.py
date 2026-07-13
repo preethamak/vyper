@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 
+from rich.console import Console
 from rich.logging import RichHandler
 
 _CONFIGURED = False
@@ -35,6 +36,7 @@ def setup_logging(verbose: bool = False, log_level: str | None = None) -> None:
             level = logging.DEBUG if verbose else logging.INFO
 
     handler = RichHandler(
+        console=Console(stderr=True),
         level=level,
         show_time=True,
         show_path=verbose,

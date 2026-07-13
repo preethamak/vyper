@@ -172,9 +172,7 @@ def _apply_candidate_reviews(result: dict[str, Any], reviews_path: Path) -> None
         detector["false_positives"] = detector_counts["false_positive"]
         detector["hardening_recommendations"] = detector_counts["hardening_recommendation"]
         detector["known_audit_related"] = detector_counts["known_audit_related"]
-        detector["precision"] = (
-            detector_confirmed / detector_total if detector_total else None
-        )
+        detector["precision"] = detector_confirmed / detector_total if detector_total else None
         detector_actionable = (
             detector_confirmed
             + detector_counts["known_audit_related"]
@@ -288,9 +286,7 @@ def run(
     for detector in detector_names:
         detector_cases = [case for case in cases if case["detector"] == detector]
         detector_hits = sum(case["status"] == "rediscovered" for case in detector_cases)
-        detector_candidates = [
-            finding for finding in findings if finding["detector"] == detector
-        ]
+        detector_candidates = [finding for finding in findings if finding["detector"] == detector]
         detector_metrics.append(
             {
                 "detector": detector,
@@ -305,8 +301,7 @@ def run(
                 "recall": detector_hits / len(detector_cases) if detector_cases else None,
                 "scanner_findings": len(detector_candidates),
                 "unreviewed_candidates": sum(
-                    finding["review_status"] == "unreviewed"
-                    for finding in detector_candidates
+                    finding["review_status"] == "unreviewed" for finding in detector_candidates
                 ),
                 "precision": None,
                 "promotion_status": "insufficient_reviewed_evidence",
