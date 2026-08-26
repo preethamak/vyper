@@ -166,14 +166,15 @@ analysis:
 
 
 def test_invalid_env_overrides_are_ignored(monkeypatch) -> None:
-    monkeypatch.setenv("GUARDIAN_DEFAULT_FORMAT", "xml")
-    monkeypatch.setenv("GUARDIAN_SEVERITY_THRESHOLD", "SEVERE")
-    monkeypatch.setenv("GUARDIAN_MAX_AUTO_FIX_TIER", "Z")
-    monkeypatch.setenv("GUARDIAN_SEMANTIC_MODE", "fast")
+    with runner.isolated_filesystem():
+        monkeypatch.setenv("GUARDIAN_DEFAULT_FORMAT", "xml")
+        monkeypatch.setenv("GUARDIAN_SEVERITY_THRESHOLD", "SEVERE")
+        monkeypatch.setenv("GUARDIAN_MAX_AUTO_FIX_TIER", "Z")
+        monkeypatch.setenv("GUARDIAN_SEMANTIC_MODE", "fast")
 
-    cfg = load_config()
+        cfg = load_config()
 
-    assert cfg.reporting.default_format == "cli"
-    assert cfg.analysis.severity_threshold == "LOW"
-    assert cfg.remediation.max_auto_fix_tier == "C"
-    assert cfg.analysis.semantic_mode == "source"
+        assert cfg.reporting.default_format == "cli"
+        assert cfg.analysis.severity_threshold == "LOW"
+        assert cfg.remediation.max_auto_fix_tier == "C"
+        assert cfg.analysis.semantic_mode == "source"
