@@ -190,6 +190,49 @@ class TestCompilerCheck:
         advisories = "\n".join(r.title for r in results)
         assert "GHSA-6m97-7527-mh74" in advisories
 
+    def test_flags_2023_reentrancy_advisory_for_vulnerable_version(self) -> None:
+        source = """\
+# pragma version 0.3.0
+token: address
+balances: public(HashMap[address, uint256])
+
+@external
+def withdraw(amount: uint256):
+    raw_call(msg.sender, b"", value=amount)
+    self.balances[msg.sender] -= amount
+"""
+        contract = parse_vyper_source(source)
+        results = check_compiler_version(contract)
+        assert any("vyper-2023-07-reentrancy" in ev for r in results for ev in r.evidence)
+        assert any(r.severity.value == "CRITICAL" for r in results)
+
+    def test_suppresses_2023_reentrancy_advisory_without_external_calls(self) -> None:
+        source = """\
+# pragma version 0.3.0
+balances: public(HashMap[address, uint256])
+
+@external
+def deposit():
+    self.balances[msg.sender] += msg.value
+"""
+        contract = parse_vyper_source(source)
+        results = check_compiler_version(contract)
+        assert not any("vyper-2023-07-reentrancy" in ev for r in results for ev in r.evidence)
+
+    def test_suppresses_2023_reentrancy_advisory_on_patched_version(self) -> None:
+        source = """\
+# pragma version ^0.3.1
+token: address
+
+@external
+def withdraw(amount: uint256):
+    raw_call(msg.sender, b"", value=amount)
+    self.balances[msg.sender] -= amount
+"""
+        contract = parse_vyper_source(source)
+        results = check_compiler_version(contract)
+        assert not any("vyper-2023-07-reentrancy" in ev for r in results for ev in r.evidence)
+
 
 class TestPragmaFormats:
     """Ensure all real-world Vyper pragma formats are detected."""

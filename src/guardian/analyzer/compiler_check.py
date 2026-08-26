@@ -57,6 +57,17 @@ _RANGED_VULNERABILITIES: list[
         "GHSA-7f92-rr6w-cq64",
         "_uses_nonreentrant",
     ),
+    (
+        "Vyper 0.2.15, 0.2.16, and 0.3.0 miscompile storage cleanup during external "
+        "calls: a malicious callee can re-enter the contract before state updates "
+        "land, even when @nonreentrant guards are present. This is the defect class "
+        "exploited in the July 2023 Curve/stableswap incidents.",
+        (0, 2, 15),
+        (0, 3, 0),
+        Severity.CRITICAL,
+        "vyper-2023-07-reentrancy",
+        "_uses_external_call_with_state",
+    ),
 ]
 
 
@@ -113,6 +124,36 @@ def _uses_nonreentrant(contract: ContractInfo) -> bool:
     return any(func.is_nonreentrant for func in contract.functions)
 
 
+def _uses_external_call_with_state(contract: ContractInfo) -> bool:
+    """True when any function both makes an external call and mutates storage.
+
+    This is the feature gate for the 2023-07 reentrancy advisory: contracts
+    that never combine external calls with state writes are not exploitable
+    through the miscompiled cleanup path.
+    """
+    external_call_re = re.compile(
+        r"\b(send|raw_call|create_minimal_proxy_to|create_copy_of)\s*\("
+        r"|\b[A-Za-z_]\w*\s*\([^()\n]*\)\s*\.\s*[A-Za-z_]\w*\s*\("
+    )
+    state_write_re = re.compile(
+        r"\bself\.\w+(?:\[.*?\])*(?:\.\w+)*\s*(?:(?:<<|>>|[+\-*/%&|^])?=)(?!=)"
+    )
+    for func in contract.functions:
+        if func.is_view or func.is_pure:
+            continue
+        has_external_call = False
+        has_state_write = False
+        for line in func.body_lines:
+            code = line.split("#", 1)[0]
+            if not has_external_call and external_call_re.search(code):
+                has_external_call = True
+            if not has_state_write and state_write_re.search(code):
+                has_state_write = True
+            if has_external_call and has_state_write:
+                return True
+    return False
+
+
 def _uses_extremely_large_array(contract: ContractInfo) -> bool:
     return any(
         int(match.group(1)) >= 46
@@ -128,6 +169,7 @@ _PATTERN_CHECKS: dict[str, object] = {
     "_uses_nonreentrant": _uses_nonreentrant,
     "_uses_extremely_large_array": _uses_extremely_large_array,
     "_uses_multiple_internal_defaults": _uses_multiple_internal_defaults,
+    "_uses_external_call_with_state": _uses_external_call_with_state,
 }
 
 

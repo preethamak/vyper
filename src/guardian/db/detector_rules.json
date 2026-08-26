@@ -160,6 +160,27 @@
       "severity": "HIGH",
       "enabled_by_default": true,
       "description": "Detects ERC-20 transfer/transferFrom calls whose boolean return value is not asserted."
+    },
+    {
+      "name": "oracle_price_manipulation",
+      "category": "oracle_manipulation",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags spot-price oracle reads (AMM reserves, instantaneous prices) in state-changing functions without a staleness or TWAP guard."
+    },
+    {
+      "name": "missing_slippage_protection",
+      "category": "front_running",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags swap/exchange calls without minimum-output or deadline protection (sandwich attack exposure)."
+    },
+    {
+      "name": "signature_replay",
+      "category": "access_control",
+      "severity": "HIGH",
+      "enabled_by_default": true,
+      "description": "Flags ecrecover signature verification lacking nonce, deadline, chain-id, or consumed-signature replay binding."
     }
   ]
 }

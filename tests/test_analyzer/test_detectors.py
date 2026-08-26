@@ -16,9 +16,12 @@ from guardian.analyzer.vyper_detector import (
     MissingInputValidationDetector,
     MissingNonreentrantDetector,
     MissingReturnValueDetector,
+    MissingSlippageProtectionDetector,
     MissingZeroAddressCheckDetector,
+    OraclePriceManipulationDetector,
     SendInLoopDetector,
     ShadowedStateVariableDetector,
+    SignatureReplayDetector,
     TimestampDependenceDetector,
     TxOriginAuthDetector,
     UncheckedSendDetector,
@@ -29,7 +32,7 @@ from guardian.analyzer.vyper_detector import (
     WeakRandomnessDetector,
     list_detectors,
 )
-from guardian.models import Severity
+from guardian.models import Confidence, Severity
 
 # -------------------------------------------------------------------------
 # Helper
@@ -1932,3 +1935,179 @@ def test_detector_catalog_exposes_maturity() -> None:
 def test_recommended_profile_only_runs_supported_and_beta_rules() -> None:
     analyzer = StaticAnalyzer(enabled_detectors=["recommended"])
     assert [detector.NAME for detector in analyzer._detectors] == list(RECOMMENDED_DETECTORS)
+
+
+# -------------------------------------------------------------------------
+# OraclePriceManipulationDetector
+# -------------------------------------------------------------------------
+
+
+class TestOraclePriceManipulation:
+    def test_flags_unguarded_spot_price_in_state_changing_function(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Oracle:
+    def price() -> uint256: view
+
+token: address
+collateral: public(uint256)
+
+@external
+def deposit(amount: uint256):
+    price: uint256 = Oracle(self.token).price()
+    self.collateral = amount * price / 10**18
+"""
+        results = _run_detector(OraclePriceManipulationDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.HIGH
+        assert "spot-price" in results[0].title.lower()
+
+    def test_ignores_function_with_staleness_guard(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Oracle:
+    def latest_answer() -> uint256: view
+
+last_update: public(uint256)
+token: address
+collateral: public(uint256)
+
+@external
+def deposit(amount: uint256):
+    assert block.timestamp - self.last_update < 3600
+    price: uint256 = Oracle(self.token).latest_answer()
+    self.collateral = amount * price / 10**18
+    self.last_update = block.timestamp
+"""
+        results = _run_detector(OraclePriceManipulationDetector, source)
+        assert len(results) == 0
+
+    def test_ignores_view_functions(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Pool:
+    def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256: view
+
+@external
+@view
+def quote(dx: uint256) -> uint256:
+    return Pool(0x1234).get_dy(0, 1, dx)
+"""
+        results = _run_detector(OraclePriceManipulationDetector, source)
+        assert len(results) == 0
+
+
+# -------------------------------------------------------------------------
+# MissingSlippageProtectionDetector
+# -------------------------------------------------------------------------
+
+
+class TestMissingSlippageProtection:
+    def test_flags_swap_without_min_or_deadline(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface StableSwap:
+    def exchange(i: uint256, j: uint256, dx: uint256): nonpayable
+
+pool: address
+
+@external
+def do_swap(i: uint256, j: uint256, dx: uint256):
+    StableSwap(self.pool).exchange(i, j, dx)
+"""
+        results = _run_detector(MissingSlippageProtectionDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.HIGH
+        assert "slippage" in results[0].title.lower()
+
+    def test_accepts_positional_min_and_deadline(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface StableSwap:
+    def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256, deadline: uint256): nonpayable
+
+pool: address
+
+@external
+def do_swap(i: uint256, j: uint256, dx: uint256, min_dy: uint256):
+    StableSwap(self.pool).exchange(i, j, dx, min_dy, block.timestamp + 300)
+"""
+        results = _run_detector(MissingSlippageProtectionDetector, source)
+        assert len(results) == 0
+
+    def test_accepts_keyword_min_received(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+interface Router:
+    def swap(amount_in: uint256, min_out: uint256): nonpayable
+
+router: address
+
+@external
+def do_swap(amount: uint256):
+    Router(self.router).swap(amount, self._compute_min_out())
+"""
+        results = _run_detector(MissingSlippageProtectionDetector, source)
+        assert len(results) == 0
+
+
+# -------------------------------------------------------------------------
+# SignatureReplayDetector
+# -------------------------------------------------------------------------
+
+
+class TestSignatureReplay:
+    def test_flags_ecrecover_without_replay_binding(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+
+@external
+def execute(hash: bytes32, v: uint256, r: bytes32, s: bytes32):
+    signer: address = ecrecover(hash, v, r, s)
+    assert signer == self.owner
+"""
+        results = _run_detector(SignatureReplayDetector, source)
+        assert len(results) == 1
+        assert results[0].severity == Severity.HIGH
+        assert "replay" in results[0].title.lower()
+        assert results[0].confidence == Confidence.HIGH
+
+    def test_accepts_nonce_and_deadline_binding(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+owner: public(address)
+nonces: public(HashMap[address, uint256])
+
+@external
+def execute(hash: bytes32, v: uint256, r: bytes32, s: bytes32, deadline: uint256):
+    assert block.timestamp <= deadline
+    expected: uint256 = self.nonces[msg.sender]
+    self.nonces[msg.sender] = expected + 1
+    digest: bytes32 = concat(hash, convert(expected, bytes32))
+    signer: address = ecrecover(digest, v, r, s)
+    assert signer == self.owner
+"""
+        results = _run_detector(SignatureReplayDetector, source)
+        assert len(results) == 0
+
+    def test_accepts_chain_id_domain_separation(self) -> None:
+        source = """\
+# pragma version ^0.4.0
+
+@external
+def redeem(hash: bytes32, v: uint256, r: bytes32, s: bytes32):
+    domain: bytes32 = keccak256(concat(convert(chain.id, bytes32), hash))
+    signer: address = ecrecover(domain, v, r, s)
+    assert signer != empty(address)
+"""
+        results = _run_detector(SignatureReplayDetector, source)
+        assert len(results) == 0

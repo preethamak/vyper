@@ -60,6 +60,8 @@ class VulnerabilityType(str, enum.Enum):
     COMPILER_BUG = "compiler_bug"
     DENIAL_OF_SERVICE = "denial_of_service"
     INPUT_VALIDATION = "input_validation"
+    ORACLE_MANIPULATION = "oracle_manipulation"
+    FRONT_RUNNING = "front_running"
 
 
 class DetectorResult(BaseModel):

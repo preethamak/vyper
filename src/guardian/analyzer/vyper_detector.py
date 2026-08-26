@@ -1,6 +1,6 @@
 """Vyper-specific vulnerability detectors.
 
-This module defines the ``BaseDetector`` abstract class and ships 22
+This module defines the ``BaseDetector`` abstract class and ships 25
 concrete detectors that operate on parsed ``ContractInfo`` objects.  By
 default detectors use the **source-level parse** produced by ``ast_parser``;
 the Vyper compiler is optional and only used when semantic mode is set to
@@ -31,8 +31,13 @@ Detector catalogue (v0.5.0)
 18. MissingInputValidationDetector   (amount/value args with no assert)
 19. UnsafeAssemblyDetector           (inline assembly usage)
 20. MissingReturnValueDetector       (interface call result unchecked)
-21. DivisionBeforeMultiplicationDetector (precision loss pattern)
-22. IncorrectERC20ReturnDetector     (ERC20 transfer return unchecked)
+ 21. DivisionBeforeMultiplicationDetector (precision loss pattern)
+ 22. IncorrectERC20ReturnDetector     (ERC20 transfer return unchecked)
+
+ New v0.7.0 detectors:
+ 23. OraclePriceManipulationDetector  (unguarded spot-price reads)
+ 24. MissingSlippageProtectionDetector (swaps without min-out/deadline)
+ 25. SignatureReplayDetector          (ecrecover without replay binding)
 """
 
 from __future__ import annotations
@@ -2044,6 +2049,251 @@ class IncorrectERC20ReturnDetector(BaseDetector):
 
 
 # ---------------------------------------------------------------------------
+# 23. Spot-price oracle reads without manipulation protection
+# ---------------------------------------------------------------------------
+
+
+_SPOT_PRICE_READ_RE = re.compile(
+    r"\.\s*(?:price|prices|get_virtual_price|get_dy|get_dx|get_dy_underlying"
+    r"|get_dx_underlying|balances|latest_answer|latestRoundData|latestRound"
+    r"|exchangeRate|rate|spot_price)\s*\("
+    r"|\bself\.\w*(?:price|oracle)\w*\b",
+    re.IGNORECASE,
+)
+_STALENESS_GUARD_RE = re.compile(
+    r"\bblock\.timestamp\b[^\n#]*(?:[-+*/<>]|<=|>=)"
+    r"|\b(?:stale|staleness|max_age|maxAge|min_update|minUpdate)\b"
+    r"|\btwap\b|\bheartbeat\b",
+    re.IGNORECASE,
+)
+
+
+class OraclePriceManipulationDetector(BaseDetector):
+    NAME = "oracle_price_manipulation"
+    DESCRIPTION = (
+        "Detect spot-price oracle reads (AMM reserves, instantaneous prices, "
+        "or exchange rates) used in state-changing functions without a visible "
+        "staleness or TWAP guard. Spot prices can be manipulated within a "
+        "single transaction via flash loans."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.ORACLE_MANIPULATION
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            if func.is_view or func.is_pure:
+                continue
+            body = func.body_text
+            if not _SPOT_PRICE_READ_RE.search(body):
+                continue
+            if _STALENESS_GUARD_RE.search(body):
+                continue
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                if not _SPOT_PRICE_READ_RE.search(code):
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Unguarded spot-price read in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` reads an instantaneous price or AMM reserve "
+                            f"(``{code}``) and uses it in a state-changing path with no "
+                            "staleness/TWAP guard. An attacker can move the spot price in the "
+                            "same transaction (e.g. with a flash loan) and profit from the "
+                            "mispriced operation."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion=(
+                            "Use a TWAP or externally committed price with a staleness check "
+                            "(e.g. assert last update age against block.timestamp), and add "
+                            "sanity bounds on the resulting value."
+                        ),
+                        why_flagged=(
+                            "Spot-price read found in state-changing function; no staleness, "
+                            "TWAP, heartbeat, or max-age guard appears in the function body."
+                        ),
+                        why_not_suppressed=(
+                            "Function is not view/pure and contains no recognized price-guard pattern."
+                        ),
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 24. Swap-like calls without slippage/deadline protection
+# ---------------------------------------------------------------------------
+
+
+_SWAP_CALL_RE = re.compile(
+    r"\.(?:exchange|exchange_underlying|exchange_received|swap|token_exchange"
+    r"|token_exchange_underlying|trade|swap_exact_tokens_for_tokens"
+    r"|swap_tokens_for_exact_tokens)\s*\(",
+    re.IGNORECASE,
+)
+_SLIPPAGE_HINT_RE = re.compile(
+    r"(?<![A-Za-z])min\w*|\bslippage\b|\bdeadline\b|\bout_amount\b|\breceived\b",
+    re.IGNORECASE,
+)
+
+
+def _count_top_level_args(call_text: str) -> int:
+    """Count top-level comma-separated arguments in ``name(...)`` call text."""
+    open_paren = call_text.find("(")
+    depth = 0
+    args = 1
+    in_string = False
+    quote_char = ""
+    for ch in call_text[open_paren:]:
+        if in_string:
+            if ch == quote_char:
+                in_string = False
+            continue
+        if ch in {"'", '"'}:
+            in_string = True
+            quote_char = ch
+        elif ch in {"(", "["}:
+            depth += 1
+        elif ch in {")", "]"}:
+            depth -= 1
+            if depth == 0:
+                break
+        elif ch == "," and depth == 1:
+            args += 1
+    return args
+
+
+class MissingSlippageProtectionDetector(BaseDetector):
+    NAME = "missing_slippage_protection"
+    DESCRIPTION = (
+        "Detect swap/exchange calls that specify no minimum-output or deadline "
+        "protection. Without these, transactions can be sandwiched for value "
+        "extraction."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.FRONT_RUNNING
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            if func.is_view or func.is_pure:
+                continue
+            func_body = func.body_text
+            has_func_level_protection = bool(_SLIPPAGE_HINT_RE.search(func_body))
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                match = _SWAP_CALL_RE.search(code)
+                if not match:
+                    continue
+                call_text = code[match.start():]
+                arg_count = _count_top_level_args(call_text)
+                # Stableswap-style calls pass min-out and deadline positionally;
+                # treat >= 5 positional arguments as protected.
+                if arg_count >= 5:
+                    continue
+                if has_func_level_protection:
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Swap without slippage protection in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` performs an exchange/swap (``{code}``) but "
+                            "specifies neither a minimum received amount nor a deadline. "
+                            "A validator or searcher can sandwich this transaction to "
+                            "extract value from the trade."
+                        ),
+                        confidence=Confidence.MEDIUM,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion=(
+                            "Pass a minimum output amount computed off-chain plus a deadline "
+                            "(e.g. ``exchange(i, j, dx, min_dy, block.timestamp + DEADLINE)``, "
+                            "or the keyword equivalents), and revert when output < min."
+                        ),
+                        why_flagged=(
+                            "Swap-like call with fewer than 5 arguments and no min-*/slippage/"
+                            "deadline identifier anywhere in the enclosing function."
+                        ),
+                        why_not_suppressed="No slippage, min-out, or deadline hint was detected.",
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
+# 25. Signature replay/malleability (ecrecover without replay binding)
+# ---------------------------------------------------------------------------
+
+
+_ECRECOVER_RE = re.compile(r"\becrecover\s*\(")
+_SIGNATURE_BINDING_RE = re.compile(
+    r"\bnonce\b|\bnonces\b|\bdeadline\b|\bexpiry\b|\bexpires\b|\bvalid_until\b"
+    r"|\bchain\s*\.\s*id\b|\bblock\s*\.\s*chainid\b|\bchainid\b"
+    r"|\bself\.\w*(?:used|consumed|claimed|executed|processed)\w*\b"
+    r"|\bhash\s*\.\s*pop\b",
+    re.IGNORECASE,
+)
+
+
+class SignatureReplayDetector(BaseDetector):
+    NAME = "signature_replay"
+    DESCRIPTION = (
+        "Detect ``ecrecover`` signature verification without a nonce, deadline, "
+        "chain-id, or consumed-signature marker. Such signatures can be replayed "
+        "or re-signed across contexts."
+    )
+    SEVERITY = Severity.HIGH
+    VULNERABILITY_TYPE = VulnerabilityType.ACCESS_CONTROL
+
+    def detect(self, contract: ContractInfo) -> list[DetectorResult]:
+        results: list[DetectorResult] = []
+        for func in contract.functions:
+            if func.is_view or func.is_pure:
+                continue
+            body = func.body_text
+            if not _ECRECOVER_RE.search(body):
+                continue
+            if _SIGNATURE_BINDING_RE.search(body):
+                continue
+            for i, line in enumerate(func.body_lines):
+                code = _strip_inline_comment(line).strip()
+                if not _ECRECOVER_RE.search(code):
+                    continue
+                abs_line = func.end_line - len(func.body_lines) + 1 + i
+                results.append(
+                    self._make_result(
+                        title=f"Signature replay risk in {func.name}()",
+                        description=(
+                            f"``{func.name}()`` verifies a signature with ``ecrecover`` but binds "
+                            "it to nothing that prevents reuse: no nonce, no deadline/expiry, "
+                            "no chain-id domain separation, and no consumed-signature record. "
+                            "The same signed message can be submitted again (replay), possibly "
+                            "in another chain/context (cross-chain replay)."
+                        ),
+                        confidence=Confidence.HIGH,
+                        line_number=abs_line,
+                        source_snippet=code,
+                        fix_suggestion=(
+                            "Include nonce, deadline, and chain-id in the signed digest, and mark "
+                            "signatures consumed (e.g. ``assert not self.used[hash]; "
+                            "self.used[hash] = True``)."
+                        ),
+                        why_flagged=(
+                            "ecrecover usage with no nonce/deadline/chain-id/consumption binding "
+                            "in the function body."
+                        ),
+                        why_not_suppressed="No replay-protection identifier was detected.",
+                    )
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
 # Detector registry
 # ---------------------------------------------------------------------------
 
@@ -2072,6 +2322,10 @@ ALL_DETECTORS: list[type[BaseDetector]] = [
     MissingReturnValueDetector,
     DivisionBeforeMultiplicationDetector,
     IncorrectERC20ReturnDetector,
+    # v0.7.0 new detectors
+    OraclePriceManipulationDetector,
+    MissingSlippageProtectionDetector,
+    SignatureReplayDetector,
 ]
 
 DETECTOR_MAP: dict[str, type[BaseDetector]] = {cls.NAME: cls for cls in ALL_DETECTORS}
@@ -2083,6 +2337,9 @@ DETECTOR_MATURITY: dict[str, str] = {
     "unprotected_selfdestruct": "beta",
     "weak_randomness": "beta",
     "unsafe_assembly": "beta",
+    "oracle_price_manipulation": "beta",
+    "missing_slippage_protection": "beta",
+    "signature_replay": "beta",
 }
 RECOMMENDED_DETECTORS: tuple[str, ...] = tuple(
     cls.NAME
