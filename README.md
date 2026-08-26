@@ -1,13 +1,31 @@
 # Vyper Guard
 
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/vyper-guard?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=ORANGE&left_text=downloads)](https://pepy.tech/projects/vyper-guard)
-[![Socket Badge](https://badge.socket.dev/pypi/package/vyper-guard/0.6.0?artifact_id=tar-gz)](https://badge.socket.dev/pypi/package/vyper-guard/0.6.0?artifact_id=tar-gz)
+[![Socket Badge](https://badge.socket.dev/pypi/package/vyper-guard/0.7.0?artifact_id=tar-gz)](https://badge.socket.dev/pypi/package/vyper-guard/0.7.0?artifact_id=tar-gz)
 
 **Static security analyzer for Vyper smart contracts.**
 
 Vyper Guard scans .vy sources, runs a focused detector suite, and emits structured security reports for auditors, developers, and security teams. It is designed for fast local analysis with optional compiler-backed semantics and verification workflows.
 
 Website: https://vyper-web.vercel.app
+
+## What's new in 0.7.0
+
+Vyper Guard 0.7.0 expands real-world DeFi coverage with three new beta detectors and a critical
+compiler advisory:
+
+- **Oracle safety:** `oracle_price_manipulation` flags unguarded spot-price reads in state-changing
+  functions (flash-loan price manipulation).
+- **Sandwich protection:** `missing_slippage_protection` flags swaps without minimum-output or
+  deadline parameters.
+- **Replay protection:** `signature_replay` flags `ecrecover` verification without nonce, deadline,
+  chain-id, or consumed-signature binding.
+- **Compiler advisories:** new `vyper-2023-07-reentrancy` CRITICAL advisory for Vyper
+  0.2.15–0.3.0 contracts that combine external calls with state writes (the Curve/stableswap
+  incident defect class), feature-gated to keep precision high.
+
+See the [changelog](https://github.com/preethamak/vyper/blob/main/docs/CHANGELOG.md) for the
+complete release notes.
 
 ## What's new in 0.6.0
 
@@ -45,7 +63,7 @@ complete release notes.
 ## Features
 
 - Vyper-focused static analysis for .vy contracts
-- 22 built-in detectors with explicit supported, beta, and experimental maturity labels
+- 25 built-in detectors with explicit supported, beta, and experimental maturity labels
 - Always-on compiler advisories (`compiler_version_check`)
 - Multiple report formats: CLI, JSON, Markdown, SARIF, HTML
 - Verification workflows for unit and fuzz tests (`verify`, `test`, `fuzz`)
@@ -261,6 +279,9 @@ Additional trust penalty:
 20. `missing_return_value`
 21. `division_before_multiplication`
 22. `incorrect_erc20_return`
+23. `oracle_price_manipulation`
+24. `missing_slippage_protection`
+25. `signature_replay`
 
 Compiler advisories are always evaluated and reported as `compiler_version_check` findings.
 

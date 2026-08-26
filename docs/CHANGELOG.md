@@ -2,6 +2,30 @@
 
 All notable changes to Vyper Guard are documented in this file.
 
+## 2026-08-26 — v0.7.0
+
+### Added
+
+- Added `oracle_price_manipulation` detector (beta): flags spot-price oracle reads (AMM reserves,
+  instantaneous prices, exchange rates) in state-changing functions with no staleness or TWAP guard.
+- Added `missing_slippage_protection` detector (beta): flags swap/exchange calls without minimum-output
+  or deadline protection (sandwich-attack exposure).
+- Added `signature_replay` detector (beta): flags `ecrecover` verification lacking nonce, deadline,
+  chain-id, or consumed-signature replay binding.
+- Added the July-2023 reentrancy compiler advisory (`vyper-2023-07-reentrancy`) for Vyper
+  0.2.15–0.3.0, gated on contracts that combine external calls with state writes — the defect class
+  exploited in the Curve/stableswap incidents.
+- Added new vulnerability categories `oracle_manipulation` and `front_running`.
+
+### Fixed
+
+- Fixed config-load test isolation: invalid-env-override tests no longer read the developer's local
+  `.guardianrc`, so the suite passes from any working directory.
+
+### Release
+
+- Version bump to `0.7.0`. Detector count: 25 built-in detectors plus the always-on compiler advisory check.
+
 ## 2026-07-13 — v0.6.0
 
 ### Added
